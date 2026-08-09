@@ -40,7 +40,7 @@ dsh plugin --profile web add link:/path/to/dsh-genui
 ## 🧩 它能做什么
 
 - **回答即界面**：组件嵌在回答里，边生成边出现，不用等整段写完
-- **30+ 组件**：卡片、表格、图表、表单、标签页、折叠面板、文件树、时间线、diff……
+- **36+ 组件**：卡片、表格、图表、表单、标签页、折叠面板、文件树、时间线、diff……
 - **函数图**：`plot` 画曲线，参数滑块拖动实时重绘，支持自动动画
 
 <p align="center">
@@ -48,6 +48,8 @@ dsh plugin --profile web add link:/path/to/dsh-genui
 </p>
 
 - **测验**：`quiz` 点选判题 + 解析 + 重试
+- **学习组件**：通用滑块、公式逐步推演、拖拽排序/配对/归类、播放/暂停/逐步推进的过程模拟
+- **轻量宿主包**：`lib/standalone.js` 可直接挂进系统 WebView，不自带浏览器内核；支持动作回传和页面状态保存/恢复
 - **事件循环**：按钮/开关带 `action`，点击回传模型，模型更新界面；同名 action 300ms 尾沿防抖，连点合并为一次（最后一次的值生效）
 - **工具通道**：`render_ui` 工具把同一份 spec 渲染成工具行卡片（交付物型 UI 走工具、回答型 UI 走围栏）
 - **自愈与上限**：每个围栏过规格守卫——坏节点静默丢弃、数值钳位、字符串截断，整树 ≤200 节点 / 8 层嵌套，病态 spec 不会拖垮界面
@@ -83,7 +85,7 @@ dsh plugin --profile web add link:/path/to/dsh-genui
 
 ```sh
 pnpm install
-pnpm run check   # 类型检查 + 114 测试 + 构建
+pnpm run check   # 类型检查 + 133 测试 + 构建
 ```
 
 ## 🗺️ Roadmap（已评估项）
@@ -92,7 +94,7 @@ pnpm run check   # 类型检查 + 114 测试 + 构建
 |---|---|---|
 | 增量 patch（模型只发 diff 不重发全量 spec） | 不做 | fence 一次 200–800 token，重发代价极小；patch 协议的教学成本与出错率不值得。若未来出现秒级自动刷新面板再议 |
 | action 防抖/去重 | ✅ 已做（300ms 尾沿，按 action 名独立） | 连点刷屏是真实摩擦，收口点一处改动 |
-| 跨会话状态持久化（回放恢复 tabs/开关） | 不做 | 回放重置是更正确的默认行为（模型已用新 fence 更新过界面）；流式期间状态天然保留 |
+| 宿主状态持久化（回放恢复 tabs/滑块/模拟步骤） | ✅ 独立宿主包已做 | 宿主可把 `snapshot()` 结果保存，在重开时作为 `initialState` 恢复 |
 | MCP 适配器 / 独立画廊页 / i18n | 不做 | 无跨工具需求信号；画廊素材已被 `gallery.ts` + demo-prompts + README 截图覆盖；内置文案仅 6 处 |
 
 测试解析 dsh 源码（`vitest.config.ts` 的 `DSH_ROOT`，默认 `~/.dsh/source/current`）。

@@ -18,6 +18,7 @@ description: Render interactive UI components inline in your reply via the dsh-u
 图表：`chart`（bars/line/donut，可多序列）`plot`（数学函数图）
 交互：`button` `input` `select` `checkbox` `radio` `switch` `textarea` `tabs` `accordion` `copy`
 高级：`mermaid`（流程图/时序/甘特等）`scene3d`（3D WebGL）`quiz`（点选判题 + 解析 + 重试）
+学习：`slider`（通用滑块）`formula`（公式推演）`sort`（拖拽排序）`match`（配对）`classify`（归类）`simulation`（过程模拟）
 
 ### 布局
 - text: `{"type":"text","size":"h1|h2|h3|body|muted|caption","content":"...","center":true?}`
@@ -63,6 +64,14 @@ description: Render interactive UI components inline in your reply via the dsh-u
 - mermaid: `{"type":"mermaid","code":"graph TD\\nA-->B"}` — flowchart/sequence/class/gantt/pie/er/state/journey
 - scene3d: `{"type":"scene3d","title":"...","meshes":[{"shape":"box|sphere|cone|cylinder|torus","color":"#hex?","size":n|[w,h,d]?,"position":[x,y,z]?,"rotation":[rx,ry,rz]?,"scale":n?|[...]?}],"ambient":0-2?,"background":"#hex?"}` — 3D WebGL，可拖拽旋转、滚轮缩放；mesh 数量 1–5 个
 - quiz: `{"type":"quiz","question":"...","options":[{"label":"...","correct":true?,"feedback":"..."?}],"explanation":"...","id":"..."?}` — 教学问答：点选即判题、可重试；`id` 变化时重置
+
+### 学习
+- slider: `{"type":"slider","label":"速度","value":2,"min":0,"max":5,"step":0.5,"unit":"m/s","action":"speed"?}`
+- formula: `{"type":"formula","label":"推导","expression":"a^2+b^2=c^2","steps":[{"expression":"c=\\sqrt{a^2+b^2}","explanation":"开方"}]}`
+- sort: `{"type":"sort","prompt":"按顺序排列","items":["巡航","点火"],"answer":["点火","巡航"],"action":"sorted"?}`
+- match: `{"type":"match","prompt":"完成配对","pairs":[{"left":"H_2O","right":"水"}],"action":"matched"?}`
+- classify: `{"type":"classify","prompt":"拖入正确分类","groups":[{"label":"哺乳类","items":["鲸"]},{"label":"鱼类","items":["鲫鱼"]}],"action":"classified"?}`
+- simulation: `{"type":"simulation","title":"过程演示","steps":[{"label":"点火","content":"消耗令牌"},{"label":"巡航","content":"产生能量"}],"intervalMs":1200,"loop":true?,"action":"step"?}`
 
 ## 使用规则
 

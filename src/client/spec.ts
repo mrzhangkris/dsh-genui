@@ -49,6 +49,12 @@ export type GenuiNode =
   | GenuiFileTree
   | GenuiBreadcrumb
   | GenuiQuiz
+  | GenuiSlider
+  | GenuiFormula
+  | GenuiSort
+  | GenuiMatch
+  | GenuiClassify
+  | GenuiSimulation
 
 export interface GenuiSpec {
   /** Short title shown as the card banner. */
@@ -433,6 +439,78 @@ export interface GenuiQuiz {
   explanation?: string
   /** Reset the quiz when this value changes (e.g. a question id). */
   id?: string
+}
+
+/* ---------------- learning controls ---------------- */
+
+export interface GenuiSlider {
+  type: 'slider'
+  label: string
+  value: number
+  min: number
+  max: number
+  step?: number
+  unit?: string
+  action?: string
+}
+
+export interface GenuiFormulaStep {
+  expression: string
+  explanation?: string
+}
+
+export interface GenuiFormula {
+  type: 'formula'
+  label?: string
+  expression: string
+  steps?: GenuiFormulaStep[]
+}
+
+export interface GenuiSort {
+  type: 'sort'
+  prompt?: string
+  items: string[]
+  answer: string[]
+  action?: string
+}
+
+export interface GenuiMatchPair {
+  left: string
+  right: string
+}
+
+export interface GenuiMatch {
+  type: 'match'
+  prompt?: string
+  pairs: GenuiMatchPair[]
+  action?: string
+}
+
+export interface GenuiClassifyGroup {
+  label: string
+  items: string[]
+}
+
+export interface GenuiClassify {
+  type: 'classify'
+  prompt?: string
+  groups: GenuiClassifyGroup[]
+  action?: string
+}
+
+export interface GenuiSimulationStep {
+  label: string
+  content: string
+}
+
+export interface GenuiSimulation {
+  type: 'simulation'
+  title?: string
+  steps: GenuiSimulationStep[]
+  current?: number
+  intervalMs?: number
+  loop?: boolean
+  action?: string
 }
 
 /** Parse the raw fence body as a GenuiSpec, or null when it is not one. */

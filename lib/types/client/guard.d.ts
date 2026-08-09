@@ -53,6 +53,11 @@ export declare const GENUI_LIMITS: {
     readonly maxMeshes: 5;
     /** Maximum `quiz` options. */
     readonly maxQuizOptions: 8;
+    /** Maximum learning-control entries. */
+    readonly maxFormulaSteps: 24;
+    readonly maxPracticeItems: 24;
+    readonly maxClassifyGroups: 8;
+    readonly maxSimulationSteps: 60;
     /** Maximum `steps` / `timeline` / `breadcrumb` / `keyvalue` entries. */
     readonly maxSteps: 24;
     readonly maxTimelineItems: 24;

@@ -9,6 +9,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } fro
 import { DiffBlock, JsonTree, CodeBlock } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useGenuiAction, getGenuiComponent, type GenuiCustomNode } from '@deepseek-ai/dsh-client-ui-primitives'
 import { GENUI_LIMITS } from './guard.ts'
+import { ClassifyNode, FormulaNode, MatchNode, SimulationNode, SliderNode, SortNode } from './LearningBlocks.tsx'
 import { PlotBlock } from './PlotBlock.tsx'
 import type {
   GenuiAccordion, GenuiBreadcrumb, GenuiCallout, GenuiChart, GenuiCode, GenuiCopy, GenuiDiff, GenuiFileTree,
@@ -260,6 +261,12 @@ function renderNode(node: GenuiNode, key: number, onAction: GenuiBlockProps['onA
     case 'file-tree': return <FileTreeNode key={key} node={node} />
     case 'breadcrumb': return <BreadcrumbNode key={key} node={node} />
     case 'quiz': return <QuizNode key={key} node={node} />
+    case 'slider': return <SliderNode key={key} node={node} onAction={onAction} />
+    case 'formula': return <FormulaNode key={key} node={node} />
+    case 'sort': return <SortNode key={key} node={node} onAction={onAction} />
+    case 'match': return <MatchNode key={key} node={node} onAction={onAction} />
+    case 'classify': return <ClassifyNode key={key} node={node} onAction={onAction} />
+    case 'simulation': return <SimulationNode key={key} node={node} onAction={onAction} />
     default: {
       // Plugin-registered custom types: a plugin ships a renderer through
       // registerGenuiComponent; unregistered unknowns render nothing. The
@@ -515,7 +522,7 @@ function TabsNode({ tabs, onAction, depth = 0 }: { tabs: GenuiTabs; onAction?: G
     document.getElementById(`${uid}-tab-${n}`)?.focus()
   }
   return (
-    <div className={css.tabs}>
+    <div className={css.tabs} data-genui-tabs data-active={active}>
       <div
         className={css.tabBar}
         role="tablist"
@@ -585,7 +592,7 @@ function SwitchNode({ node, onAction }: { node: GenuiSwitch; onAction?: GenuiBlo
   const [on, setOn] = useState(node.checked === true)
   const action = node.action
   return (
-    <label className={css.switchRow}>
+    <label className={css.switchRow} data-checked={on}>
       <span className={css.switchLabel}>{node.label}</span>
       <button
         type="button"
@@ -626,7 +633,7 @@ function AccordionNode({ node, onAction, depth = 0 }: { node: GenuiAccordion; on
   const uid = useId()
   const items = node.items.slice(0, GENUI_LIMITS.maxAccordionItems)
   return (
-    <div className={css.accordion}>
+    <div className={css.accordion} data-genui-accordion data-open={open ?? ''}>
       {items.map((item, i) => (
         <div key={i} className={css.accItem}>
           <button
@@ -772,7 +779,7 @@ function QuizNode({ node }: { node: GenuiQuiz }) {
   const chosen = selected === null ? undefined : options[selected]
   const correct = chosen?.correct === true
   return (
-    <div className={css.quiz} data-genui-quiz>
+    <div className={css.quiz} data-genui-quiz data-selected={selected ?? ''}>
       <div className={css.quizQuestion}>{node.question}</div>
       <div className={css.quizOptions}>
         {options.map((opt, i) => {
@@ -870,9 +877,10 @@ function useDebouncedAction(onAction: GenuiBlockProps['onAction'] | undefined): 
  * Render a GenUI spec as an inline block. Falls back to nothing when the spec
  * carries no items (the fence renderer already refused non-specs before us).
  */
-export const GenuiBlock = memo(function GenuiBlock({ spec }: GenuiBlockProps) {
+export const GenuiBlock = memo(function GenuiBlock({ spec, onAction: directAction }: GenuiBlockProps) {
   const gap = spec.gap ?? 14
-  const onAction = useDebouncedAction(useGenuiAction())
+  const contextAction = useGenuiAction()
+  const onAction = useDebouncedAction(directAction ?? contextAction)
   return (
     <div className={css.block} data-genui>
       {spec.title !== undefined && <div className={css.banner}>{spec.title}</div>}

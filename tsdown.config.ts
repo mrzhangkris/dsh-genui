@@ -29,6 +29,7 @@ const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const PACKAGE_ROOT = dirname(fileURLToPath(import.meta.url))
 
 function browserSourcePath(source: string, sourcemapPath: string): string {
   if (!source.startsWith('.')) return source
@@ -101,6 +102,17 @@ function purityGate(): NonNullable<UserConfig['plugins']>[number] {
   }
 }
 
+function standalonePrimitives(): NonNullable<UserConfig['plugins']>[number] {
+  return {
+    name: 'dsh-genui-standalone-primitives',
+    resolveId(source: string) {
+      return source === '@deepseek-ai/dsh-client-ui-primitives'
+        ? resolvePath(PACKAGE_ROOT, 'lib/types/client/standalone-primitives.js')
+        : null
+    },
+  }
+}
+
 const clientConfig: UserConfig = {
   name: `${ID}/client`,
   entry: { client: 'lib/types/client/index.js' },
@@ -140,4 +152,28 @@ const libConfig: UserConfig = {
   clean: false,
 }
 
-export default [libConfig, clientConfig]
+const standaloneConfig: UserConfig = {
+  name: `${ID}/standalone`,
+  entry: { standalone: 'lib/types/client/standalone.js' },
+  outDir: 'lib',
+  format: 'cjs',
+  platform: 'browser',
+  dts: false,
+  sourcemap: false,
+  clean: false,
+  define: {
+    'process.env.NODE_ENV': JSON.stringify('production'),
+    'import.meta.env.MODE': JSON.stringify('production'),
+    'import.meta.env': JSON.stringify({ MODE: 'production' }),
+  },
+  noExternal: () => true,
+  plugins: [standalonePrimitives(), cssModulesPlugin()],
+  outputOptions: {
+    entryFileNames: 'standalone.js',
+    inlineDynamicImports: true,
+    intro: 'var module = { exports: {} }; var exports = module.exports;',
+    footer: 'window.WeiBeiGenUI = module.exports;',
+  },
+}
+
+export default [libConfig, clientConfig, standaloneConfig]

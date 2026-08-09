@@ -9,7 +9,7 @@
  * are operable, but events do NOT flow back to the model.
  */
 /** One node in the component tree. */
-export type GenuiNode = GenuiText | GenuiRow | GenuiCol | GenuiGrid | GenuiCard | GenuiButton | GenuiInput | GenuiSelect | GenuiCheckbox | GenuiLink | GenuiBadge | GenuiStat | GenuiProgress | GenuiDivider | GenuiList | GenuiTable | GenuiChart | GenuiTabs | GenuiAvatar | GenuiSpacer | GenuiPlot | GenuiCallout | GenuiSteps | GenuiKeyValue | GenuiDiff | GenuiJson | GenuiCode | GenuiRadio | GenuiSwitch | GenuiTextarea | GenuiAccordion | GenuiCopy | GenuiMermaid | GenuiScene3D | GenuiTimeline | GenuiFileTree | GenuiBreadcrumb | GenuiQuiz;
+export type GenuiNode = GenuiText | GenuiRow | GenuiCol | GenuiGrid | GenuiCard | GenuiButton | GenuiInput | GenuiSelect | GenuiCheckbox | GenuiLink | GenuiBadge | GenuiStat | GenuiProgress | GenuiDivider | GenuiList | GenuiTable | GenuiChart | GenuiTabs | GenuiAvatar | GenuiSpacer | GenuiPlot | GenuiCallout | GenuiSteps | GenuiKeyValue | GenuiDiff | GenuiJson | GenuiCode | GenuiRadio | GenuiSwitch | GenuiTextarea | GenuiAccordion | GenuiCopy | GenuiMermaid | GenuiScene3D | GenuiTimeline | GenuiFileTree | GenuiBreadcrumb | GenuiQuiz | GenuiSlider | GenuiFormula | GenuiSort | GenuiMatch | GenuiClassify | GenuiSimulation;
 export interface GenuiSpec {
     /** Short title shown as the card banner. */
     title?: string;
@@ -342,6 +342,66 @@ export interface GenuiQuiz {
     explanation?: string;
     /** Reset the quiz when this value changes (e.g. a question id). */
     id?: string;
+}
+export interface GenuiSlider {
+    type: 'slider';
+    label: string;
+    value: number;
+    min: number;
+    max: number;
+    step?: number;
+    unit?: string;
+    action?: string;
+}
+export interface GenuiFormulaStep {
+    expression: string;
+    explanation?: string;
+}
+export interface GenuiFormula {
+    type: 'formula';
+    label?: string;
+    expression: string;
+    steps?: GenuiFormulaStep[];
+}
+export interface GenuiSort {
+    type: 'sort';
+    prompt?: string;
+    items: string[];
+    answer: string[];
+    action?: string;
+}
+export interface GenuiMatchPair {
+    left: string;
+    right: string;
+}
+export interface GenuiMatch {
+    type: 'match';
+    prompt?: string;
+    pairs: GenuiMatchPair[];
+    action?: string;
+}
+export interface GenuiClassifyGroup {
+    label: string;
+    items: string[];
+}
+export interface GenuiClassify {
+    type: 'classify';
+    prompt?: string;
+    groups: GenuiClassifyGroup[];
+    action?: string;
+}
+export interface GenuiSimulationStep {
+    label: string;
+    content: string;
+}
+export interface GenuiSimulation {
+    type: 'simulation';
+    title?: string;
+    steps: GenuiSimulationStep[];
+    current?: number;
+    intervalMs?: number;
+    loop?: boolean;
+    action?: string;
 }
 /** Parse the raw fence body as a GenuiSpec, or null when it is not one. */
 export declare function parseGenuiSpec(raw: string): GenuiSpec | null;

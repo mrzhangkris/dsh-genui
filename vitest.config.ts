@@ -8,7 +8,7 @@ import { defineConfig } from 'vitest/config'
  * against the same code the browser bundle compiles — no built lib/ copies.
  * Adjust DSH_ROOT if you develop against a different checkout.
  */
-const DSH_ROOT = resolve(__dirname, '../../.dsh/source/current')
+const DSH_ROOT = process.env.DSH_ROOT ?? resolve(__dirname, '../../.dsh/source/current')
 
 const src = (p: string) => resolve(DSH_ROOT, p)
 

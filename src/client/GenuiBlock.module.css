@@ -339,6 +339,66 @@
 .donutTotalLabel { fill: var(--dsw-alias-label-tertiary); font-size: 9px; }
 .donutLegend { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
 
+/* ---------- learning controls ---------- */
+
+.learningSlider, .formula, .practice, .simulation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,0.22));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1, rgba(127,127,127,0.04));
+}
+.learningHead { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; font-weight: 600; }
+.learningHead output { font-variant-numeric: tabular-nums; color: var(--dsw-alias-state-business-primary, #4f8ef7); }
+.learningSlider input[type="range"] { width: 100%; accent-color: var(--dsw-alias-state-business-primary, #4f8ef7); }
+.learningTitle { font-size: 13px; font-weight: 650; color: var(--dsw-alias-label-primary); }
+.formulaMath { overflow-x: auto; padding: 4px 0; color: var(--dsw-alias-label-primary); }
+.formulaMath math { font-size: 1.18em; }
+.formulaSteps { display: flex; flex-direction: column; gap: 8px; margin: 0; padding-left: 24px; }
+.formulaSteps li { padding-left: 4px; }
+.formulaSteps p { margin: 2px 0 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+.learningControls, .practiceFooter { display: flex; align-items: center; gap: 8px; }
+.learningControls button, .practiceFooter button, .sortButtons button {
+  border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,0.22));
+  border-radius: 6px;
+  padding: 5px 9px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2, transparent);
+  cursor: pointer;
+}
+.learningControls button:disabled, .sortButtons button:disabled { opacity: .35; cursor: default; }
+.sortList { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.sortList > li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,0.2)); border-radius: 7px; background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,0.03)); }
+.dragHandle { color: var(--dsw-alias-label-tertiary); cursor: grab; }
+.sortButtons { display: flex; gap: 4px; margin-left: auto; }
+.sortButtons button { padding: 2px 7px; }
+.matchGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.matchGrid > div, .itemBank { display: flex; flex-direction: column; gap: 6px; }
+.matchGrid button, .itemBank button, .classifyGrid button {
+  border: 1px solid var(--dsw-alias-border-l1, rgba(127,127,127,0.22));
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,0.03));
+  text-align: left;
+  cursor: pointer;
+}
+.matchGrid button small { display: block; margin-top: 3px; color: var(--dsw-alias-state-business-primary, #4f8ef7); }
+.selected { outline: 2px solid var(--dsw-alias-state-business-primary, #4f8ef7); outline-offset: -2px; }
+.itemBank { flex-direction: row; flex-wrap: wrap; min-height: 36px; }
+.classifyGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.classifyGrid > div { min-height: 90px; display: flex; flex-direction: column; gap: 6px; padding: 9px; border: 1px dashed var(--dsw-alias-border-l1, rgba(127,127,127,0.3)); border-radius: 8px; }
+.classifyGrid strong { font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.correct { color: var(--dsw-alias-state-success-primary, #3b9b6d); }
+.incorrect { color: var(--dsw-alias-state-warn-primary, #b88120); }
+.simulationStage { min-height: 92px; padding: 14px; border-radius: 8px; background: var(--dsw-alias-bg-layer-2, rgba(127,127,127,0.04)); }
+.simulationStage p { margin: 7px 0 0; color: var(--dsw-alias-label-secondary); line-height: 1.65; }
+.simulationTrack { display: flex; align-items: center; gap: 5px; }
+.simulationTrack button { flex: 1; height: 4px; padding: 0; border: 0; border-radius: 2px; background: var(--dsw-alias-border-l1, rgba(127,127,127,0.22)); cursor: pointer; }
+.simulationTrack .activeStep { background: var(--dsw-alias-state-business-primary, #4f8ef7); }
+
 /* ---------- radio / switch / textarea ---------- */
 
 .fieldGroup { display: flex; flex-direction: column; gap: 6px; }
