@@ -18,7 +18,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSPropert
 import { CodeBlock } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { GenuiBlock } from './GenuiBlock.tsx'
-import { repairGenuiSpec } from './guard.ts'
+import { repairGenuiSpec, validateGenuiSpec } from './guard.ts'
 import { fenceStateKey } from './interaction-store.ts'
 import { parsePartialGenuiSpec } from './parse-partial.ts'
 import { applyPanelOperation, diagnosePanelBudget, type PanelOperationStatus } from './panel-store.ts'
@@ -126,37 +126,61 @@ function FencePanelPublisher({ sessionId, sourceId, order, spec }: {
  *   streaming halves are never completed early.
  */
 export function resolveGenuiSpec(raw: string, context?: GenuiFenceContext): GenuiSpec | null {
+  return resolveGenuiSpecDetailed(raw, context).spec
+}
+
+/** Parsed+repaired spec plus any validation problems found on the ORIGINAL
+ * body (before repair). A non-empty `warnings` means the spec rendered but
+ * was not exactly what the author wrote — the block shows an amber bar. */
+export interface ResolvedGenuiSpec {
+  spec: GenuiSpec | null
+  warnings: string[]
+}
+
+export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContext): ResolvedGenuiSpec {
+  const validate = (candidate: unknown): string[] => {
+    if (candidate === undefined) return []
+    const v = validateGenuiSpec(candidate)
+    return v.ok ? [] : v.errors
+  }
   const parsed = parsePartialGenuiSpec(raw)
   let spec = parsed === null ? null : repairGenuiSpec(parsed)
+  // Warnings reflect the ORIGINAL parsed body when it was used as-is;
+  // after repair the body has already been normalized, so re-validating the
+  // repaired spec would hide the author's original mistake.
+  let warnings = parsed === null ? [] : validate(parsed)
   if (spec === null) {
     const repaired = repairFenceJson(raw)
     if (repaired !== null) {
       const reparsed = parsePartialGenuiSpec(repaired.text)
       spec = reparsed === null ? null : repairGenuiSpec(reparsed)
+      if (reparsed !== null) warnings = validate(reparsed)
     }
     if (spec === null && context?.source !== undefined) {
       const completed = completeFenceJson(raw)
       if (completed !== null) {
         const reparsed = parsePartialGenuiSpec(completed.text)
         spec = reparsed === null ? null : repairGenuiSpec(reparsed)
+        if (reparsed !== null) warnings = validate(reparsed)
       }
     }
   }
-  return spec
+  return { spec, warnings }
 }
 
 /** The inline GenuiBlock tree for a resolved non-panel spec. */
-function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spec: GenuiSpec): ReactNode {
+function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spec: GenuiSpec, warnings: string[] = []): ReactNode {
   const sessionId = context?.sessionId
   return (
     // React key carries the stable source identity when present (atomic
     // remount at streaming→settled), falling back to the document key.
-    // Repaired specs render SILENTLY: once the UI renders, no amber note
-    // tells the user something was wrong — only an unrecoverable body keeps
-    // the red diagnostic.
+    // v2.8: repaired specs that carried validation problems now surface an
+    // amber bar (the block still renders) — previously they rendered
+    // SILENTLY with no clue the spec was not what the author wrote.
     <ErrorBoundary key={context?.source?.id ?? key} label="该界面">
       <GenuiBlock
         spec={spec}
+        warnings={warnings}
         // v2.7 durable state: session + stable source + content fingerprint —
         // replaying the same content restores answers/lock/field values; new
         // content (换题, edited spec) gets a fresh key. Without a stable
@@ -178,7 +202,7 @@ function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spe
  * Shared verbatim by both channels.
  */
 export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFenceContext): ReactNode | null {
-  const spec = resolveGenuiSpec(raw, context)
+  const { spec, warnings } = resolveGenuiSpecDetailed(raw, context)
   if (spec === null) return null
   if (spec.panel === true) {
     // Publish only with a settled stable source — streaming/identity-less
@@ -199,7 +223,7 @@ export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFe
     }
     return <Fragment key={key} />
   }
-  return renderInlineFence(key, context, spec)
+  return renderInlineFence(key, context, spec, warnings)
 }
 
 /**
@@ -209,7 +233,7 @@ export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFe
  * unpublishable `panel:true` fence renders `null` (nothing in the flow).
  */
 export function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext): ReactNode {
-  const spec = resolveGenuiSpec(raw, context)
+  const { spec, warnings } = resolveGenuiSpecDetailed(raw, context)
   if (spec === null) return <FenceFallback key={key} fenceKey={key} raw={raw} />
   if (spec.panel === true) {
     if (context !== undefined && context.sessionId !== undefined && context.source !== undefined) {
@@ -226,5 +250,5 @@ export function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceCont
     }
     return null
   }
-  return renderInlineFence(key, context, spec)
+  return renderInlineFence(key, context, spec, warnings)
 }

@@ -19,7 +19,7 @@
  */
 
 /** The plugin's entry id — mirrors the loader entry name (package name). */
-const PLUGIN_ID = '@changfenhuang/dsh-genui'
+const PLUGIN_ID = '@omdsh-dev/dsh-genui'
 
 /** Assets directory served by the node-half route. */
 const ASSET_DIR = `/plugins/${PLUGIN_ID}/assets`

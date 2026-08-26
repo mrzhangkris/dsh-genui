@@ -21,6 +21,13 @@ export interface GenuiBlockProps {
      * localStorage and restores on refresh / re-render of the same content.
      */
     stateKey?: string | undefined;
+    /**
+     * v2.8: human-readable spec problems found by validation after repair
+     * (e.g. a `children` field silently ignored by an `items`-based node, an
+     * unknown type). Repaired specs still render — the amber bar tells the
+     * author the spec was not exactly what they wrote.
+     */
+    warnings?: string[] | undefined;
 }
 /** Per-question metadata registered by grouped radios for local grading. */
 export interface QuestionMeta {

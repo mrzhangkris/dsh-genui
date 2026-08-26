@@ -1261,3 +1261,28 @@ button.ftNameBtn[aria-expanded] { cursor: pointer; }
 .panelResizeHandleActive {
   background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4f8ef7) 35%, transparent);
 }
+
+/* Amber spec-warning bar (v2.8): rendered when validation found problems
+   after repair — the block still renders, but the author sees the spec was
+   not exactly what they wrote (e.g. `children` on an `items`-based node).
+   Reuses the warn state tokens so it matches calloutWarning/badge.warn. */
+.specWarnings {
+  margin: 0 0 var(--dsl-g-gap-md);
+  padding: var(--dsl-g-gap-sm) var(--dsl-g-gap-md);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f5b83d) 30%, transparent);
+  border-radius: var(--dsl-g-radius-control);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f5b83d) var(--dsl-g-tint), transparent);
+  color: var(--dsw-alias-label-primary);
+}
+.specWarningsTitle {
+  display: block;
+  font-size: var(--dsl-g-font-title);
+  font-weight: 600;
+  color: var(--dsw-alias-state-warn-secondary, #f7cf7d);
+}
+.specWarningsList {
+  margin: var(--dsl-g-gap-xs) 0 0;
+  padding-left: 1.2em;
+  font-size: var(--dsl-g-font-meta);
+  color: var(--dsw-alias-label-secondary, rgba(255, 255, 255, 0.55));
+}

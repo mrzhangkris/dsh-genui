@@ -1,13 +1,13 @@
 /**
- * Package-owned invariant companion for `@changfenhuang/dsh-genui`.
- * @module @changfenhuang/dsh-genui/invariant
+ * Package-owned invariant companion for `@omdsh-dev/dsh-genui`.
+ * @module @omdsh-dev/dsh-genui/invariant
  */
 
 /* jscpd:ignore-start */
 import type { Context } from '@deepseek-ai/cordis'
 import type { InvariantInstaller } from '@deepseek-ai/dsh-invariants'
 
-const PACKAGE_NAME = '@changfenhuang/dsh-genui'
+const PACKAGE_NAME = '@omdsh-dev/dsh-genui'
 
 /** Cordis companion plugin name. */
 export const name = 'genui-invariant'

@@ -41,6 +41,14 @@ export interface GenuiFenceContext {
  *   streaming halves are never completed early.
  */
 export declare function resolveGenuiSpec(raw: string, context?: GenuiFenceContext): GenuiSpec | null;
+/** Parsed+repaired spec plus any validation problems found on the ORIGINAL
+ * body (before repair). A non-empty `warnings` means the spec rendered but
+ * was not exactly what the author wrote — the block shows an amber bar. */
+export interface ResolvedGenuiSpec {
+    spec: GenuiSpec | null;
+    warnings: string[];
+}
+export declare function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContext): ResolvedGenuiSpec;
 /**
  * The resolved fence render for the DOM channel: `null` when the body is
  * unrepairable (the stock code block stays visible), otherwise the panel

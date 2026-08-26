@@ -228,16 +228,16 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'text', content, ...opt('size', enu(v.size, TEXT_SIZES)), ...opt('center', v.center === true ? true : undefined) }
     }
     case 'row': {
-      return { type: 'row', items: repairItems(v.items, ctx, depth + 1), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
+      return { type: 'row', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
     }
     case 'col': {
-      return { type: 'col', items: repairItems(v.items, ctx, depth + 1), ...opt('gap', num(v.gap, 0, 96)) }
+      return { type: 'col', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('gap', num(v.gap, 0, 96)) }
     }
     case 'grid': {
-      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairItems(v.items, ctx, depth + 1) }
+      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairItems(v.items ?? v.children, ctx, depth + 1) }
     }
     case 'card': {
-      return { type: 'card', items: repairItems(v.items, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
+      return { type: 'card', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'button': {
       const label = str(v.label, GENUI_LIMITS.maxString)
@@ -1291,8 +1291,10 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       isStr('text')
       break
     case 'row': case 'col': case 'card': case 'grid':
-      if (!Array.isArray(v.items)) errors.push(`${at}: type '${type}' requires items (array)`)
-      walk(v.items, depth + 1, `${at}.items`)
+      if (!Array.isArray(v.items) && !Array.isArray(v.children)) {
+        errors.push(`${at}: type '${type}' requires items (array)`)
+      }
+      walk(v.items ?? v.children, depth + 1, `${at}.items`)
       if (type === 'grid') isNum('cols')
       break
     case 'button': case 'checkbox': case 'link': case 'switch':
