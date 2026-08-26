@@ -267,8 +267,15 @@ export const Scene3DNode = memo(function Scene3DNode({ node }: { node: GenuiScen
     void import('../scene3d-lazy.ts').then(async m => {
       if (!alive || ref.current === null) return
       try {
-        dispose = await m.mountScene(ref.current, scene)
-        if (alive) setStatus('ready')
+        const d = await m.mountScene(ref.current, scene)
+        // The unmount may have landed DURING the await: dispose here, or the
+        // WebGL context leaks on a detached container forever.
+        if (!alive || ref.current === null) {
+          d()
+          return
+        }
+        dispose = d
+        setStatus('ready')
       } catch {
         if (alive) setStatus('error')
       }
@@ -314,7 +321,6 @@ export const TimelineNode = memo(function TimelineNode({ node }: { node: GenuiTi
  * — click a dir to fold/unfold, default fully open. Zero model round trip. */
 export const FileTreeNode = memo(function FileTreeNode({ node }: { node: GenuiFileTree }) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
-  const pathKey = (depth: number, i: number): string => `${depth}-${i}`
   const toggle = (k: string): void => {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -323,10 +329,13 @@ export const FileTreeNode = memo(function FileTreeNode({ node }: { node: GenuiFi
       return next
     })
   }
-  const renderNode = (n: GenuiFileTreeNode, depth: number, i: number): ReactNode => {
+  const renderNode = (n: GenuiFileTreeNode, depth: number, i: number, path: string): ReactNode => {
     if (depth > GENUI_LIMITS.maxTreeDepth) return null
     const isDir = n.type === 'dir' || (n.children !== undefined && n.children.length > 0)
-    const k = pathKey(depth, i)
+    // Positional path key ("0/2/1"): a bare depth+index key collided across
+    // DIFFERENT parents, so folding one folder folded every same-position
+    // cousin elsewhere in the tree.
+    const k = path + String(i)
     const folded = isDir && collapsed.has(k)
     return (
       <div key={k} className={css.ftRow} style={{ paddingLeft: `${depth * 16}px` }}>
@@ -339,11 +348,11 @@ export const FileTreeNode = memo(function FileTreeNode({ node }: { node: GenuiFi
           <span className={`${css.ftIcon} ${isDir ? css.ftIconDir : ''}`} aria-hidden>{isDir ? (folded ? '▸' : '▾') : '·'}</span>
           <span className={`${css.ftName} ${isDir ? css.ftDir : ''}`}>{n.name}</span>
         </button>
-        {isDir && !folded && (n.children ?? []).map((c, ci) => renderNode(c, depth + 1, ci))}
+        {isDir && !folded && (n.children ?? []).map((c, ci) => renderNode(c, depth + 1, ci, `${k}/`))}
       </div>
     )
   }
-  return <div className={css.fileTree}>{node.items.slice(0, GENUI_LIMITS.maxListItems).map((n, i) => renderNode(n, 0, i))}</div>
+  return <div className={css.fileTree}>{node.items.slice(0, GENUI_LIMITS.maxListItems).map((n, i) => renderNode(n, 0, i, ''))}</div>
 })
 
 /** Quiz: a self-contained teaching question. Selecting an option marks it

@@ -107,7 +107,7 @@ describe('genui:fence section', () => {
     ctx.provide('webServer', { register: (route: unknown) => { routes.push(route) } })
     expect(routes).toEqual([expect.objectContaining({
       kind: 'prefix',
-      path: '/plugins/@changfenhuang/dsh-genui/assets',
+      path: '/plugins/@omdsh-dev/dsh-genui/assets',
     })])
   })
 })

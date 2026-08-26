@@ -138,11 +138,17 @@ class SafeMathParser {
   }
 
   private parseNumber(): number {
-    const start = this.i
-    while (this.i < this.src.length && /[0-9.eE+\-]/.test(this.src[this.i]!)) this.i++
-    const text = this.src.slice(start, this.i)
-    const value = Number(text)
-    if (Number.isNaN(value)) throw new ParseError(`invalid number '${text}'`, start)
+    // A positional decimal-literal match: digits with optional fraction
+    // and/or ONE exponent (whose sign belongs to the literal). A bare
+    // leading +/- must stay with the unary layer (parseUnary): scanning it
+    // into the literal swallowed the BINARY +/- in expressions like
+    // `x^2+1` ("2+1" became one token → Number("2+1")=NaN → parse error),
+    // so every spaceless plot expression failed to render.
+    const m = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(this.src.slice(this.i))
+    if (m === null) throw new ParseError('invalid number', this.i)
+    this.i += m[0].length
+    const value = Number(m[0])
+    if (Number.isNaN(value)) throw new ParseError(`invalid number '${m[0]}'`, this.i)
     return value
   }
 
@@ -152,8 +158,10 @@ class SafeMathParser {
     const name = this.src.slice(start, this.i)
     this.skipWs()
     if (this.peek() === '(') {
-      // Function call.
-      const fn = FUNCTIONS[name]
+      // Own-property check like the constants/vars lookups below: a plain
+      // index would match inherited members ('constructor', 'toString', …)
+      // and let non-whitelisted identifiers parse.
+      const fn = Object.hasOwn(FUNCTIONS, name) ? FUNCTIONS[name] : undefined
       if (fn === undefined) throw new ParseError(`unknown function '${name}'`, start)
       this.i++
       const args: Array<number | ((x: number) => number)> = []

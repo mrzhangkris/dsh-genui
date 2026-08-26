@@ -197,7 +197,9 @@ export const PlotBlock = memo(function PlotBlock({
     const from = params[`${animParam.si}:${animParam.param.name}`] ?? animParam.param.value
     const to = animParam.param.animateTo!
     const duration = animParam.param.durationMs ?? 4000
-    const start = performance.now()
+    // Mutable timeline origin: the loop branch resets it and keeps the same
+    // rAF chain running.
+    let start = performance.now()
     const tick = (now: number): void => {
       const t = Math.min(1, (now - start) / duration)
       const eased = 1 - Math.pow(1 - t, 3) // easeOutCubic
@@ -207,9 +209,14 @@ export const PlotBlock = memo(function PlotBlock({
       if (t < 1) {
         animRef.current = requestAnimationFrame(tick)
       } else if (animParam.param.loop === true) {
+        // Loop: rewind and restart the timeline IN PLACE. (The previous
+        // `requestAnimationFrame(() => setPlaying(p => p))` set the SAME
+        // state value, so React bailed out, this effect never re-ran, and
+        // the animation froze after exactly one pass.)
         setParams(prev => ({ ...prev, [`${animParam.si}:${animParam.param.name}`]: animParam.param.value }))
         setAnimProgress(0)
-        animRef.current = requestAnimationFrame(() => setPlaying(p => p))
+        start = performance.now()
+        animRef.current = requestAnimationFrame(tick)
       } else {
         setPlaying(false)
       }

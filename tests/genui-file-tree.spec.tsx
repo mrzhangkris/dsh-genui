@@ -11,7 +11,7 @@
 //      path (the same `.tableWrap` pattern) instead of hard-clipping.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { hasFenceRegistry } from './setup'
@@ -125,5 +125,50 @@ describe('GenUI file-tree layout (issue #28)', () => {
     expect(fileTreeRule).toContain('overscroll-behavior-x: contain')
     expect(fileTreeRule).toContain('min-width: 0')
     expect(fileTreeRule).toContain('max-width: 100%')
+  })
+})
+
+describe('GenUI file-tree fold isolation', () => {
+  // Regression: the collapse key used to be `${depth}-${index}`, so two
+  // subdirectories sitting at the SAME position under DIFFERENT parents
+  // shared one key — folding one folded its same-position cousin too.
+  const twoDirs = {
+    type: 'file-tree',
+    items: [
+      { name: 'a/', type: 'dir', children: [
+        { name: 'deep/', type: 'dir', children: [{ name: 'x.txt', type: 'file' }] },
+      ] },
+      { name: 'b/', type: 'dir', children: [
+        { name: 'other/', type: 'dir', children: [{ name: 'y.txt', type: 'file' }] },
+      ] },
+    ],
+  }
+
+  function dirButton(container: HTMLElement, label: string): HTMLButtonElement {
+    const btn = Array.from(container.querySelectorAll<HTMLButtonElement>('[class*="ftNameBtn"]'))
+      .find(b => b.textContent?.includes(label))
+    expect(btn, `dir button ${label} must exist`).not.toBeNull()
+    return btn!
+  }
+
+  it('folding one subdir does NOT fold a same-position subdir under another parent', () => {
+    const { container } = renderBlock({ items: [twoDirs] })
+    // Both subtrees start open.
+    expect(container.textContent).toContain('x.txt')
+    expect(container.textContent).toContain('y.txt')
+    // Fold a/deep only.
+    fireEvent.click(dirButton(container, 'deep/'))
+    expect(container.textContent).not.toContain('x.txt')
+    expect(container.textContent).toContain('y.txt')
+    expect(dirButton(container, 'deep/').getAttribute('aria-expanded')).toBe('false')
+    expect(dirButton(container, 'other/').getAttribute('aria-expanded')).toBe('true')
+    // Folding b/other leaves a/deep folded (independent state).
+    fireEvent.click(dirButton(container, 'other/'))
+    expect(container.textContent).not.toContain('y.txt')
+    expect(dirButton(container, 'deep/').getAttribute('aria-expanded')).toBe('false')
+    // Re-expand works independently too.
+    fireEvent.click(dirButton(container, 'deep/'))
+    expect(container.textContent).toContain('x.txt')
+    expect(container.textContent).not.toContain('y.txt')
   })
 })

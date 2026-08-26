@@ -1373,7 +1373,14 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
           const t = obj(v.tabs[i])
           if (t === undefined) { errors.push(`${at}.tabs[${i}] must be an object`); continue }
           if (typeof t.label !== 'string') errors.push(`${at}.tabs[${i}].label must be a string`)
-          walk(t.items, depth + 1, `${at}.tabs[${i}].items`)
+          // Mirror repairTabs: `content` is accepted as an `items` alias
+          // (single component or array). Validating items-only reported
+          // working specs as broken and sent the model into pointless
+          // rewrite loops via validate_dsh_ui.
+          const rawItems = t.items !== undefined ? t.items
+            : t.content !== undefined ? (Array.isArray(t.content) ? t.content : [t.content])
+            : undefined
+          walk(rawItems, depth + 1, `${at}.tabs[${i}].items`)
         }
       }
       break

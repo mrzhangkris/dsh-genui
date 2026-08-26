@@ -82,7 +82,9 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
   const [persisted] = useState(() => (stateKey === undefined ? null : loadBlockState(stateKey)))
   const [answers, setAnswers] = useState<Record<string, string>>(persisted?.answers ?? {})
   const [fields, setFields] = useState<Record<string, string>>(persisted?.fields ?? {})
-  const [meta, setMeta] = useState<Record<string, QuestionMeta>>({})
+  // Grading metadata restores with the rest of the durable state: a locked
+  // (submitted) paper without its meta could only show a hollow "0 / 0".
+  const [meta, setMeta] = useState<Record<string, QuestionMeta>>(persisted?.meta ?? {})
   const [locked, setLocked] = useState(persisted?.locked === true)
   const [round, setRound] = useState(0)
   // Secret (password) field ids: their values never persist and never join
@@ -139,10 +141,13 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
         answers,
         locked,
         ...(Object.keys(safeFields).length > 0 ? { fields: safeFields } : {}),
+        // Grading metadata rides along: without it a restored submitted
+        // paper can only render the hollow "0 / 0" score.
+        ...(Object.keys(meta).length > 0 ? { meta } : {}),
       })
     }, 300)
     return () => clearTimeout(timer)
-  }, [stateKey, answers, locked, fields, secretFields])
+  }, [stateKey, answers, locked, fields, secretFields, meta])
   return (
     <div className={css.block} data-genui>
       {spec.title !== undefined && <div className={css.banner}>{spec.title}</div>}

@@ -121,13 +121,15 @@ describe('tier-2 structural repair (settled messages only)', () => {
 })
 
 describe('spec healing (parseable but structurally invalid)', () => {
-  it('heals defects silently and renders the UI', () => {
+  it('heals defects, renders the UI, and surfaces an amber note', () => {
     render(<div>{renderGenuiFence(
       '{"title":"x","items":[{"type":"table","columns":["a"],"rows":[["1"]]},[],["callout","info","已排除","x"],{"type":"button","label":"ok","action":"a"}]}',
       's1',
     )}</div>)
-    // Healed nodes are dropped without any amber note.
-    expect(screen.queryByRole('note')).toBeNull()
+    // Since v0.9.3 healing is no longer fully silent: the ORIGINAL body's
+    // validation problems surface as an amber note (role="note") while the
+    // healed nodes still render.
+    expect(screen.getByRole('note').textContent).toContain('需要修正')
     // The repaired UI still renders.
     expect(document.body.textContent).toContain('ok')
   })
@@ -137,9 +139,12 @@ describe('spec healing (parseable but structurally invalid)', () => {
     expect(screen.queryByRole('note')).toBeNull()
   })
 
-  it('ignores unknown-type entries (plugin custom components are valid)', () => {
+  it('renders unknown-type entries and notes them (plugin customs stay valid)', () => {
     render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's3')}</div>)
-    expect(screen.queryByRole('note')).toBeNull()
+    // Custom components pass through repair untouched and render; the
+    // validator cannot know whether a renderer is registered, so since
+    // v0.9.3 it warns (amber note) instead of staying silent.
+    expect(screen.getByRole('note').textContent).toContain('custom-thing')
   })
 })
 

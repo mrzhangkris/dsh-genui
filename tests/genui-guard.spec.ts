@@ -524,3 +524,32 @@ describe('repairGenuiSpec: color field whitelist (CSS injection channel)', () =>
     expect(scene.meshes[0]!.color).toBeUndefined()
   })
 })
+
+describe('validateGenuiSpec: repair parity for the tabs[].content alias', () => {
+  // repairTabs accepts `content` as an items alias (single component or
+  // array); validation must accept it too, else validate_dsh_ui flags
+  // working specs and models rewrite them pointlessly.
+  it('accepts tabs[].content as a single node without errors', () => {
+    const result = validateGenuiSpec({
+      items: [{ type: 'tabs', tabs: [{ label: 'A', content: text('x') }] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('accepts tabs[].content as an array', () => {
+    const result = validateGenuiSpec({
+      items: [{ type: 'tabs', tabs: [{ label: 'A', content: [text('a'), text('b')] }] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('still reports real problems inside aliased tab content', () => {
+    const result = validateGenuiSpec({
+      items: [{ type: 'tabs', tabs: [{ label: 'A', content: [{ type: 'progress' }] }] }],
+    })
+    expect(result.ok).toBe(false)
+    expect(result.errors.join('\n')).toContain('tabs[0]')
+  })
+})

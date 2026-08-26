@@ -399,8 +399,14 @@ export function InputNode({ node, onAction, answers }: {
   // Initial value: spec default, else durable state (restored after refresh).
   // Secrets restore as blank: a password that survives a refresh would be a
   // stored secret, which is exactly what the boundary forbids.
-  const [value, setValue] = useState<string>(() =>
-    secret ? '' : (node.value ?? (id !== undefined ? answers?.fields[id] ?? '' : '')))
+  const [value, setValue] = useState<string>(() => {
+    if (secret) return ''
+    // Durable user edit WINS over the spec default (same precedence as
+    // select/slider): the old `node.value ?? fields[id]` order made every
+    // refresh revert the field to the model-authored value.
+    const restored = id !== undefined ? answers?.fields[id] : undefined
+    return restored ?? node.value ?? ''
+  })
   // Last value actually DELIVERED to the model: blur only sends when the
   // value changed since the last delivery (a focus-in/focus-out with no edit
   // used to fire a pointless action round trip). Seeded with the mount value
@@ -418,7 +424,8 @@ export function InputNode({ node, onAction, answers }: {
   useEffect(() => {
     if (mounted.current) return
     mounted.current = true
-    if (!secret && id !== undefined && node.value !== undefined && node.value.trim() !== '') {
+    if (!secret && id !== undefined && node.value !== undefined && node.value.trim() !== ''
+      && answers?.fields[id] === undefined) {
       answers?.setField(id, node.value)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -468,8 +475,13 @@ export function TextareaNode({ node, onAction, answers }: {
 }) {
   const action = node.action
   const id = node.id
-  const [value, setValue] = useState<string>(() =>
-    node.value ?? (id !== undefined ? answers?.fields[id] ?? '' : ''))
+  const [value, setValue] = useState<string>(() => {
+    // Durable user edit WINS over the spec default (same precedence as
+    // select/slider): the old `node.value ?? fields[id]` order made every
+    // refresh revert the textarea to the model-authored value.
+    const restored = id !== undefined ? answers?.fields[id] : undefined
+    return restored ?? node.value ?? ''
+  })
   // Last value delivered to the model: blur sends only on change. Seeded
   // with the mount value so an unedited blur stays silent.
   const lastSent = useRef<string | null>(value)
@@ -485,7 +497,8 @@ export function TextareaNode({ node, onAction, answers }: {
   useEffect(() => {
     if (mounted.current) return
     mounted.current = true
-    if (id !== undefined && node.value !== undefined && node.value.trim() !== '') {
+    if (id !== undefined && node.value !== undefined && node.value.trim() !== ''
+      && answers?.fields[id] === undefined) {
       answers?.setField(id, node.value)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -13,6 +13,7 @@
  * payload is small (answers map + a few field values).
  * @module @changfenhuang/dsh-genui/client/interaction-store
  */
+import type { QuestionMeta } from './blocks/state.ts';
 /** Durable state of one UI block. */
 export interface BlockInteractionState {
     /** group → chosen option label (radio aggregation answers). */
@@ -21,6 +22,13 @@ export interface BlockInteractionState {
     locked?: boolean;
     /** field id → current value (input/textarea with an `id`). */
     fields?: Record<string, string>;
+    /**
+     * group → question metadata registered by grouped radios (label/options/
+     * answer/explanation). Persisted TOGETHER WITH `locked`: a submitted
+     * paper restored without its grading data could only render a meaningless
+     * "0 / 0" score, so the submit view needs the meta to redraw the grade.
+     */
+    meta?: Record<string, QuestionMeta>;
 }
 /** Load a block's durable state, or null when absent/corrupt. */
 export declare function loadBlockState(stateKey: string): BlockInteractionState | null;
