@@ -2,7 +2,7 @@
  * Advanced family: callout/steps/keyvalue, plot/diff/json/code, tabs and
  * accordion containers (recursing through renderNode), copy, mermaid,
  * scene3d, timeline, file-tree, quiz, breadcrumb.
- * @module @changfenhuang/dsh-genui/client/blocks/advanced
+ * @module @omdsh-dev/dsh-genui/client/blocks/advanced
  */
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CodeBlock, DiffBlock, JsonTree } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -214,6 +214,12 @@ export function AccordionNode({ node, onAction, depth = 0, answers }: {
  * live region inside it would never announce. */
 export const CopyNode = memo(function CopyNode({ node }: { node: GenuiCopy }) {
   const [copied, setCopied] = useState(false)
+  // Managed timer: a bare setTimeout kept firing after unmount (harmless
+  // since React 18, but it also pinned a stale closure per click).
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current)
+  }, [])
   return (
     <>
       <button
@@ -222,7 +228,8 @@ export const CopyNode = memo(function CopyNode({ node }: { node: GenuiCopy }) {
         onClick={() => {
           void navigator.clipboard?.writeText(node.text).catch(() => {})
           setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
+          if (resetTimer.current !== null) clearTimeout(resetTimer.current)
+          resetTimer.current = setTimeout(() => setCopied(false), 1500)
         }}
       >
         {copied ? '✓ 已复制' : (node.label ?? '复制')}

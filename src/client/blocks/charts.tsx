@@ -1,7 +1,7 @@
 /**
  * Chart family: categorical palette, the sortable table, and the bars / line
  * / donut renderers. All local-first; no model round trips.
- * @module @changfenhuang/dsh-genui/client/blocks/charts
+ * @module @omdsh-dev/dsh-genui/client/blocks/charts
  */
 import { memo, useState } from 'react'
 import css from '../GenuiBlock.module.css'
@@ -135,7 +135,20 @@ export const ChartNode = memo(function ChartNode({ chart }: { chart: GenuiChart 
 export const BarsNode = memo(function BarsNode({ chart }: { chart: GenuiChart }) {
   const grouped = chart.series !== undefined ? chart.series.slice(0, GENUI_LIMITS.maxPlotSeries) : undefined
   if (grouped !== undefined && grouped.length > 0) {
-    const labels = grouped[0]!.data.map(d => d.label)
+    // Label union across ALL series in first-seen order (capped): grouping
+    // used to take series[0]'s labels alone, so data present only in later
+    // series vanished and differing label sets misaligned by index.
+    const seen = new Set<string>()
+    const labels: string[] = []
+    for (const s of grouped) {
+      for (const d of s.data) {
+        if (seen.has(d.label)) continue
+        seen.add(d.label)
+        labels.push(d.label)
+        if (labels.length >= GENUI_LIMITS.maxChartPoints) break
+      }
+      if (labels.length >= GENUI_LIMITS.maxChartPoints) break
+    }
     const max = Math.max(...grouped.flatMap(s => s.data.map(d => Number(d.value) || 0)), 1)
     return (
       <div className={css.chart}>
@@ -147,7 +160,9 @@ export const BarsNode = memo(function BarsNode({ chart }: { chart: GenuiChart })
             <div key={i} className={css.barCol}>
               <div className={css.groupedBars}>
                 {grouped.map((s, si) => {
-                  const d = s.data[i]
+                  // Align by LABEL, not index: a datum counts for this
+                  // column only when its label matches the union label.
+                  const d = s.data.find(dd => dd.label === labels[i])
                   // Cap at 82% so the per-bar value annotation stays inside
                   // the plot; negatives clamp to a zero-height bar.
                   const v = d === undefined ? 0 : Number(d.value) || 0
@@ -170,7 +185,7 @@ export const BarsNode = memo(function BarsNode({ chart }: { chart: GenuiChart })
           ))}
         </div>
         <div className={css.chartLabels}>
-          {labels.map(label => <span key={label} className={css.barLabel}>{label}</span>)}
+          {labels.map((label, i) => <span key={i} className={css.barLabel}>{label}</span>)}
         </div>
       </div>
     )

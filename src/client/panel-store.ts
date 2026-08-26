@@ -141,7 +141,12 @@ function writePanelStorage(sessionId: string, entry: PersistedPanel): void {
       const evicted = order.pop()
       if (evicted !== undefined) delete sessions[evicted]
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ order, sessions }))
+    // Skip identical writes: repeated folds of the same panel (append ops,
+    // expand tokens) used to rewrite the whole store every time.
+    const next = JSON.stringify({ order, sessions })
+    if (localStorage.getItem(STORAGE_KEY) !== next) {
+      localStorage.setItem(STORAGE_KEY, next)
+    }
   } catch {
     // Quota / privacy-mode failures are non-fatal: the panel stays live in
     // memory, only cross-restart persistence is lost.

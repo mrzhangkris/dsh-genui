@@ -2,7 +2,7 @@
  * Pure mermaid source utilities — no mermaid import, so this module can ship
  * in the main client bundle while the heavy mermaid engine lives in a lazy
  * asset bundle (`lib/assets/mermaid.js`, loaded on demand by mermaid-lazy).
- * @module @changfenhuang/dsh-genui/client/mermaid-safe
+ * @module @omdsh-dev/dsh-genui/client/mermaid-safe
  */
 
 /** Reject any rendered SVG that carries script, event-handler attributes, or
@@ -10,9 +10,11 @@
  * diagram never contains these, so a hit means the sanitizer failed (a
  * mermaid regression or a bypass): throw and let the caller show the plain
  * source fallback instead of injecting the markup. Cheap linear scan over
- * the SVG string; happens once per diagram.
+ * the SVG string; happens once per diagram. The attribute-name class
+ * includes `/`: SVG allows whitespace-free attribute separation
+ * (`<svg/onload=x>`), which `[\s"']` alone would miss.
  */
-const SVG_INJECTION = /<script|[\s"']on[a-z]+\s*=|javascript:/i
+const SVG_INJECTION = /<script|[\s"'\/]on[a-z]+\s*=|javascript:/i
 
 /** Throws when `svg` carries script, event-handler attributes, or
  * `javascript:` URIs. Exported for tests; `renderMermaid` is the only caller

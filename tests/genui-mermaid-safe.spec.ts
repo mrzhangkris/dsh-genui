@@ -175,3 +175,16 @@ describe('ensureFlowchartKind', () => {
     expect(ensureFlowchartKind(src)).toBe('graph TD\nA --> B')
   })
 })
+
+describe('assertSafeSvg: whitespace-free attribute separation', () => {
+  it('rejects <svg/onload=…> (slash-separated attribute)', () => {
+    // SVG allows attributes without whitespace after the tag name; the
+    // `[\s"']` prefix class alone missed this shape.
+    expect(() => assertSafeSvg('<svg/onload=alert(1)></svg>')).toThrow(/sanitization/)
+  })
+
+  it('still passes slash-carrying legit markup (self-closing tags, paths)', () => {
+    expect(() => assertSafeSvg(LEGIT)).not.toThrow()
+    expect(() => assertSafeSvg('<svg><path d="M0 0L1 1"/><circle r="1"/></svg>')).not.toThrow()
+  })
+})

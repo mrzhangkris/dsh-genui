@@ -1,7 +1,7 @@
 /**
  * Basic display family: avatar palette, and the local click-feedback button
  * (the actionable-button chip). Used by the render dispatcher.
- * @module @changfenhuang/dsh-genui/client/blocks/basic
+ * @module @omdsh-dev/dsh-genui/client/blocks/basic
  */
 import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import css from '../GenuiBlock.module.css'

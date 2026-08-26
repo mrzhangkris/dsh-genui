@@ -98,3 +98,30 @@
 2. GenuiBlock 持久化：补「提交→刷新恢复」往返用例（会抓住 🟠-2）
 3. forms：补「spec 默认值 vs 持久化值」优先级矩阵（会抓住 🟠-3）
 4. validator/repair 一致性：对 gallery 全词汇分别跑 repair 和 validate 断言零分歧（会抓住 🟠-7）
+
+---
+
+## 修复记录
+
+### 第一批（commit 8a3972e）：🔴×1 + 🟠×7 全部修复，测试债清零
+详见分支 `fix/review-findings` 提交信息。vitest 372/7 → 391/0。
+
+### 第二批：🟡×11 处置结果
+| # | 状态 | 说明 |
+|---|---|---|
+| 9 | ✅ 已修 | json value 加 `maxJsonValue: 24_000` 序列化预算，超限丢节点（截断会产出非法 JSON）；不可序列化值安全丢弃 |
+| 10 | ✅ 已修 | SVG_INJECTION 字符类补 `/`，封住 `<svg/onload=` 形态；自闭合标签等合法斜杠不受影响（有测试） |
+| 11 | ✅ 已修 | prefetch 选择器包 try/catch，rev 异常字符不再能炸掉 boot |
+| 12 | ✅ 已修 | rawOf 死分支删除（连同失业的 isTextNode） |
+| 13 | ✅ 部分修复 | sweep 在 `document.hidden` 时跳过（后台标签页零开销）；O(n²) 候选扫描属结构性改造，暂留 |
+| 14 | ✅ 已修 | 图表标签行 key 改索引，重复 label 不再触发 duplicate key |
+| 15 | ✅ 已修 | grouped bars 按「全部 series 的 label 并集（首现顺序，capped）」对齐，逐 label 查数；series[0] 缺的标签不再消失 |
+| 16 | ✅ 已修 | 警告校验仅在 settled（context.source 存在）时执行——流式期间每 chunk 的半截 spec 不再闪琥珀条；spec 指纹加单条目 memo，流式期间省去重复 stringify |
+| 17 | ✅ 部分修复 | panel-store 写前比对跳过同内容写盘；replayBarrier 同 seq 边缘语义保持原样（改 fold 语义风险大于收益） |
+| 18 | ✅ 已修 | CopyNode 定时器改 useRef 管理 + 卸载清理 |
+| 19 | ✅ 已修 | src/ 内 29 处 `@changfenhuang` 注释引用全部更新为 `@omdsh-dev` |
+
+💡 nits 未动（steps current==length、空 options select 钳位、mermaid 主题固化、djb2 碰撞、toolview order=0、动作去重键）——均为已文档化的设计取舍或无害边界。
+
+第二批新增回归：json 上限×3、SVG 斜杠注入×2、grouped label 并集×1（免注册表 harness）、流式抑制警告×1。
+最终基线：vitest **398 过 / 0 挂** / 104 skip，tsc 干净，build 成功。

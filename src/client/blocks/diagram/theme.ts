@@ -7,7 +7,7 @@
  * Two skins ship: light and dark (the dark palette is the jet-black
  * inversion, same roles). The `editorial` variant is the full skin and
  * defaults to light unless the host theme is dark.
- * @module @changfenhuang/dsh-genui/client/blocks/diagram/theme
+ * @module @omdsh-dev/dsh-genui/client/blocks/diagram/theme
  */
 import type { GenuiDiagramTheme, GenuiDiagramVariant } from '../../spec.ts'
 

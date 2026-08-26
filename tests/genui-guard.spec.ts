@@ -553,3 +553,23 @@ describe('validateGenuiSpec: repair parity for the tabs[].content alias', () => 
     expect(result.errors.join('\n')).toContain('tabs[0]')
   })
 })
+
+describe('repairGenuiSpec: json value size budget', () => {
+  it('keeps normal values verbatim', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'json', value: { a: 1, b: ['x', 'y'] } }] })
+    expect(spec?.items[0]).toEqual({ type: 'json', value: { a: 1, b: ['x', 'y'] } })
+  })
+
+  it('drops the node when the serialized value exceeds maxJsonValue', () => {
+    // One huge string payload: pre-fix this passed through unbounded and
+    // JsonNode would re-stringify it on every render.
+    const big = { pad: 'x'.repeat(GENUI_LIMITS.maxJsonValue + 10) }
+    expect(repairGenuiSpec({ items: [{ type: 'json', value: big }] })).toEqual({ items: [] })
+  })
+
+  it('tolerates unserializable values instead of throwing', () => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    expect(() => repairGenuiSpec({ items: [{ type: 'json', value: circular }] })).not.toThrow()
+  })
+})

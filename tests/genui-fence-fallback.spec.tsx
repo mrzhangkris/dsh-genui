@@ -125,6 +125,7 @@ describe('spec healing (parseable but structurally invalid)', () => {
     render(<div>{renderGenuiFence(
       '{"title":"x","items":[{"type":"table","columns":["a"],"rows":[["1"]]},[],["callout","info","已排除","x"],{"type":"button","label":"ok","action":"a"}]}',
       's1',
+      { source: { id: 's', order: [1, 0, 0] } },
     )}</div>)
     // Since v0.9.3 healing is no longer fully silent: the ORIGINAL body's
     // validation problems surface as an amber note (role="note") while the
@@ -140,11 +141,18 @@ describe('spec healing (parseable but structurally invalid)', () => {
   })
 
   it('renders unknown-type entries and notes them (plugin customs stay valid)', () => {
-    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's3')}</div>)
+    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's3', { source: { id: 's', order: [1, 0, 0] } })}</div>)
     // Custom components pass through repair untouched and render; the
     // validator cannot know whether a renderer is registered, so since
     // v0.9.3 it warns (amber note) instead of staying silent.
     expect(screen.getByRole('note').textContent).toContain('custom-thing')
+  })
+
+  it('suppresses the amber note while STREAMING (no source yet)', () => {
+    // Mid-stream chunks lack `source`; validating the half-grown prefix used
+    // to flash transient warnings on every chunk.
+    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's4')}</div>)
+    expect(screen.queryByRole('note')).toBeNull()
   })
 })
 

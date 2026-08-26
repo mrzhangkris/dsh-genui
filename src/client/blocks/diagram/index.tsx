@@ -6,7 +6,7 @@
  *
  * Layout is resolved by `resolveLayout`, routing by `routeEdge`, and every
  * value is sanitized by the guard before this component ever sees it.
- * @module @changfenhuang/dsh-genui/client/blocks/diagram
+ * @module @omdsh-dev/dsh-genui/client/blocks/diagram
  */
 import { useMemo } from 'react'
 import type { GenuiDiagram } from '../../spec.ts'

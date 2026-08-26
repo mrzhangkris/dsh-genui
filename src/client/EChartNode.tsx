@@ -9,7 +9,7 @@
  * to a themed option template that reads the same `data`/`series` shape as
  * the `chart` node, so a model can upgrade a `chart` to ECharts by changing
  * `type` to `echart` and adding `preset`.
- * @module @changfenhuang/dsh-genui/client/EChartNode
+ * @module @omdsh-dev/dsh-genui/client/EChartNode
  */
 import { useEffect, useRef, useState } from 'react'
 import css from './GenuiBlock.module.css'

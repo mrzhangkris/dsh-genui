@@ -18,7 +18,7 @@
  * streams, every FINISHED component appears the moment its JSON object
  * closes, so the UI assembles top-down before the fence (or reply) completes.
  * A body with no finished component yet falls back to a plain code block.
- * @module @changfenhuang/dsh-genui/client
+ * @module @omdsh-dev/dsh-genui/client
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -47,12 +47,20 @@ type HostFenceExt = {
 export function prefetchGenuiAssets(): void {
   if (typeof document === 'undefined') return
   for (const file of ['mermaid.js', 'three.js']) {
-    if (document.head.querySelector(`link[rel="prefetch"][href="${assetUrl(file)}"]`) !== null) continue
-    const link = document.createElement('link')
-    link.rel = 'prefetch'
-    link.as = 'script'
-    link.href = assetUrl(file)
-    document.head.appendChild(link)
+    const url = assetUrl(file)
+    // The rev query rides inside the attribute selector unescaped; a future
+    // version string with quotes/backslashes would throw a DOMException and
+    // abort boot. Prefetch is best-effort, so swallow and skip.
+    try {
+      if (document.head.querySelector(`link[rel="prefetch"][href="${url}"]`) !== null) continue
+      const link = document.createElement('link')
+      link.rel = 'prefetch'
+      link.as = 'script'
+      link.href = url
+      document.head.appendChild(link)
+    } catch {
+      continue
+    }
   }
 }
 

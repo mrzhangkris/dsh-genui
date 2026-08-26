@@ -29,6 +29,8 @@ export const GENUI_LIMITS = {
   maxNodes: 200,
   /** Maximum length of any plain string field. */
   maxString: 2000,
+  /** Maximum serialized length of a `json` node value. */
+  maxJsonValue: 24_000,
   /** Maximum length of a `code` body. */
   maxCode: 12_000,
   /** Maximum length of a mermaid source. */
@@ -401,8 +403,19 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'diff', diffs }
     }
     case 'json': {
-      // Any JSON value is acceptable; only the node itself is validated.
+      // Any JSON VALUE is acceptable, but its SERIALIZED size is bounded:
+      // JsonNode re-stringifies per render, so an unbounded payload let a
+      // single node pin the main thread (echart options carry three caps;
+      // json had none). Oversized values DROP the whole node — truncation
+      // would produce invalid JSON.
       if (!('value' in v)) return null
+      let serialized: string
+      try {
+        serialized = JSON.stringify(v.value) ?? ''
+      } catch {
+        return null
+      }
+      if (serialized.length > GENUI_LIMITS.maxJsonValue) return null
       return { type: 'json', value: v.value }
     }
     case 'code': {

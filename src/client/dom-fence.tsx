@@ -110,10 +110,6 @@ interface Mount {
   lastNode: ReactNode
 }
 
-function isTextNode(node: Node): node is Text {
-  return node.nodeType === Node.TEXT_NODE
-}
-
 /** The banner's language label: a leaf element whose text is exactly the
  * lang. CodeBlock renders the label as a childless div; deepsuite-style
  * surfaces use a span; the ONLY structural invariants across hosts are "a
@@ -158,11 +154,10 @@ function labelTextOf(block: Element): string {
 function rawOf(block: Element): string {
   const pre = block.querySelector('pre')
   if (pre === null) return ''
+  // Every child contributes its text. The former isTextNode branch split
+  // was a no-op — both arms were identical.
   let text = ''
-  for (const node of pre.childNodes) {
-    if (isTextNode(node)) text += node.textContent ?? ''
-    else text += node.textContent ?? ''
-  }
+  for (const node of pre.childNodes) text += node.textContent ?? ''
   return text
 }
 
@@ -630,7 +625,12 @@ export function installDomFenceRenderer(
     // observer would only fire on structural changes and miss body growth.
     characterData: true,
   })
-  const interval = window.setInterval(sweep, SWEEP_MS)
+  // Background tabs get no sweeps: rendering into an invisible document is
+  // pure waste, and hidden tabs throttle rAF to zero anyway, so the
+  // observer-scheduled sweeps would pile up without ever painting.
+  const interval = window.setInterval(() => {
+    if (!document.hidden) sweep()
+  }, SWEEP_MS)
   sweep()
 
   return () => {

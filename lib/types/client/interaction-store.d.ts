@@ -11,7 +11,7 @@
  *
  * Bounded: at most MAX_BLOCKS entries, LRU-evicted on write; each block's
  * payload is small (answers map + a few field values).
- * @module @changfenhuang/dsh-genui/client/interaction-store
+ * @module @omdsh-dev/dsh-genui/client/interaction-store
  */
 import type { QuestionMeta } from './blocks/state.ts';
 /** Durable state of one UI block. */

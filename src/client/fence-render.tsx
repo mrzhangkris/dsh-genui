@@ -143,29 +143,48 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
     const v = validateGenuiSpec(candidate)
     return v.ok ? [] : v.errors
   }
+  // Warnings are a SETTLED-render concern: mid-stream, `context.source` is
+  // absent (it exists only once the message finished), and re-validating a
+  // half-grown prefix per chunk flashed transient amber bars while typing.
+  const settled = context?.source !== undefined
   const parsed = parsePartialGenuiSpec(raw)
   let spec = parsed === null ? null : repairGenuiSpec(parsed)
   // Warnings reflect the ORIGINAL parsed body when it was used as-is;
   // after repair the body has already been normalized, so re-validating the
   // repaired spec would hide the author's original mistake.
-  let warnings = parsed === null ? [] : validate(parsed)
+  let warnings = parsed === null || !settled ? [] : validate(parsed)
   if (spec === null) {
     const repaired = repairFenceJson(raw)
     if (repaired !== null) {
       const reparsed = parsePartialGenuiSpec(repaired.text)
       spec = reparsed === null ? null : repairGenuiSpec(reparsed)
-      if (reparsed !== null) warnings = validate(reparsed)
+      if (reparsed !== null && settled) warnings = validate(reparsed)
     }
     if (spec === null && context?.source !== undefined) {
       const completed = completeFenceJson(raw)
       if (completed !== null) {
         const reparsed = parsePartialGenuiSpec(completed.text)
         spec = reparsed === null ? null : repairGenuiSpec(reparsed)
-        if (reparsed !== null) warnings = validate(reparsed)
+        if (reparsed !== null && settled) warnings = validate(reparsed)
       }
     }
   }
   return { spec, warnings }
+}
+
+/** Single-entry fingerprint memo: renderInlineFence stringifies the spec for
+ * the durable-state key on EVERY call, and GenuiBlock's memo comparator
+ * stringifies both prop specs again — during streaming that tripled the
+ * serialization of a growing tree. Specs are immutable between renders, so
+ * identity is a sound cache key. */
+let fingerprintSpec: GenuiSpec | null = null
+let fingerprintCache = ''
+function specFingerprint(spec: GenuiSpec): string {
+  if (spec !== fingerprintSpec) {
+    fingerprintSpec = spec
+    fingerprintCache = JSON.stringify(spec)
+  }
+  return fingerprintCache
 }
 
 /** The inline GenuiBlock tree for a resolved non-panel spec. */
@@ -188,7 +207,7 @@ function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spe
         // persisted.
         stateKey={sessionId === undefined
           ? undefined
-          : fenceStateKey(sessionId, context?.source?.id ?? String(key), JSON.stringify(spec))}
+          : fenceStateKey(sessionId, context?.source?.id ?? String(key), specFingerprint(spec))}
       />
     </ErrorBoundary>
   )

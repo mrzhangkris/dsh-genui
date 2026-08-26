@@ -27,6 +27,8 @@ export declare const GENUI_LIMITS: {
     readonly maxNodes: 200;
     /** Maximum length of any plain string field. */
     readonly maxString: 2000;
+    /** Maximum serialized length of a `json` node value. */
+    readonly maxJsonValue: 24000;
     /** Maximum length of a `code` body. */
     readonly maxCode: 12000;
     /** Maximum length of a mermaid source. */

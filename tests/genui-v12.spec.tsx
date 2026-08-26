@@ -9,6 +9,8 @@ import { registerGenuiComponent } from './host-registry.ts'
 import { hasFenceRegistry } from './setup'
 import { GenuiActionContext } from '../src/client/action-context.ts'
 import { GENUI_ACTION_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
+import { GenuiBlock } from '../src/client/GenuiBlock.tsx'
+import { repairGenuiSpec } from '../src/client/guard.ts'
 import { sampleExpr } from '../src/client/safe-math.ts'
 
 afterEach(() => {
@@ -282,5 +284,28 @@ describe.skipIf(!hasFenceRegistry)('GenUI component registry', () => {
     } finally {
       d1()
     }
+  })
+})
+
+// Registry-less harness: the grouped-bars label union must hold even where
+// the fence registry is unavailable (this environment skips the gated
+// describes above, which would otherwise be the only coverage).
+describe('grouped bars: label union across series (registry-less)', () => {
+  it('renders columns for labels missing from series[0] and aligns by label', () => {
+    const { container } = render(
+      <GenuiActionContext.Provider value={undefined}>
+        <GenuiBlock spec={repairGenuiSpec({ items: [
+          { type: 'chart', series: [
+            { label: '本月', data: [{ label: 'Q1', value: 3 }, { label: 'Q2', value: 5 }] },
+            { label: '上月', data: [{ label: 'Q2', value: 4 }, { label: 'Q3', value: 2 }] },
+          ] },
+        ] })!} />
+      </GenuiActionContext.Provider>,
+    )
+    // Pre-fix the labels came from series[0] alone, so Q3 vanished.
+    const labels = Array.from(container.querySelectorAll('[class*="barLabel"]')).map(el => el.textContent)
+    expect(labels).toEqual(['Q1', 'Q2', 'Q3'])
+    // One bar per series per union column (missing data → zero-height).
+    expect(container.querySelectorAll('[class*="groupedFill"]').length).toBe(6)
   })
 })

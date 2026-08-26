@@ -3,7 +3,7 @@
  * `window.__GenuiAssets__.echarts`. Built as a standalone IIFE into
  * `lib/assets/echarts.js` and served by the plugin's node-half route; loaded
  * on demand by echarts-lazy when a spec contains an `echart` node.
- * @module @changfenhuang/dsh-genui/client/asset-echarts
+ * @module @omdsh-dev/dsh-genui/client/asset-echarts
  */
 import { type EChartsType, type EChartsCoreOption } from 'echarts';
 /** The engine surface registered by the echarts asset bundle. */
