@@ -148,11 +148,21 @@ describe('spec healing (parseable but structurally invalid)', () => {
     expect(screen.getByRole('note').textContent).toContain('custom-thing')
   })
 
-  it('suppresses the amber note while STREAMING (no source yet)', () => {
-    // Mid-stream chunks lack `source`; validating the half-grown prefix used
-    // to flash transient warnings on every chunk.
-    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's4')}</div>)
+  it('suppresses the amber note while STREAMING (body still growing)', () => {
+    // A finished-but-problematic component followed by an unterminated one:
+    // the partial parse succeeds (so the block renders) but the whole body
+    // is not valid JSON yet — validating it per chunk used to flash
+    // transient warnings on every token.
+    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1},{"type":"te', 's4')}</div>)
     expect(screen.queryByRole('note')).toBeNull()
+  })
+
+  it('notes problems for a COMPLETE body even without a source context', () => {
+    // Registry/toolview-style callers pass no context at all; settledness
+    // then comes from the body itself parsing as whole JSON. (This exact
+    // case regressed when the gate keyed on `source` alone.)
+    render(<div>{renderGenuiFence('{"items":[{"type":"custom-thing","x":1}]}', 's5')}</div>)
+    expect(screen.getByRole('note').textContent).toContain('custom-thing')
   })
 })
 

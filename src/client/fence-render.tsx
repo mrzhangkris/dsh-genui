@@ -143,10 +143,17 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
     const v = validateGenuiSpec(candidate)
     return v.ok ? [] : v.errors
   }
-  // Warnings are a SETTLED-render concern: mid-stream, `context.source` is
-  // absent (it exists only once the message finished), and re-validating a
+  // Warnings are a SETTLED-render concern: mid-stream, re-validating a
   // half-grown prefix per chunk flashed transient amber bars while typing.
-  const settled = context?.source !== undefined
+  // "Settled" is either of:
+  //   - the host marked the message finished (`context.source` exists), or
+  //   - the body ALREADY parses as complete JSON — registry/toolview-style
+  //     callers legitimately pass no context at all, and their complete
+  //     bodies must still be validated (source alone was a false proxy for
+  //     that case). A streaming half fails whole-body JSON.parse, so it
+  //     stays suppressed. Short-circuit keeps the conversation path free of
+  //     an extra parse when source already proves settledness.
+  const settled = context?.source !== undefined || isCompleteJson(raw)
   const parsed = parsePartialGenuiSpec(raw)
   let spec = parsed === null ? null : repairGenuiSpec(parsed)
   // Warnings reflect the ORIGINAL parsed body when it was used as-is;

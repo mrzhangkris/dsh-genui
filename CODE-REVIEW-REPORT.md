@@ -125,3 +125,10 @@
 
 第二批新增回归：json 上限×3、SVG 斜杠注入×2、grouped label 并集×1（免注册表 harness）、流式抑制警告×1。
 最终基线：vitest **398 过 / 0 挂** / 104 skip，tsc 干净，build 成功。
+
+### 追加（第三笔提交）：根治警告门控的流式/完结灰色地带
+`resolveGenuiSpecDetailed` 的 settled 判定从「仅看 `context.source`」改为
+「source 存在 **或** body 已是完整 JSON（`isCompleteJson`）」。无 context 的
+调用方（注册表/toolview 风格）的完整 body 恢复校验，流式半截仍被抑制；
+短路顺序保证会话路径不多付一次 parse。新增两用例锁定双向行为
+（真·半截 body 无警告 / 完整 body 无 context 有警告）。
