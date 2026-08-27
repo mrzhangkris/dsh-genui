@@ -633,6 +633,17 @@ describe('repair/validate: callout text→content & type_→tone aliases', () =>
     expect(r.ok).toBe(false)
     expect(r.errors.join('\n')).toContain('content')
   })
+
+  it('repairs body into content', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', body: '正文字段', tone: 'info' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文字段', tone: 'info' })
+  })
+
+  it('validator accepts body (no false warning)', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'callout', body: 'x' }] })
+    expect(r.ok).toBe(true)
+    expect(r.errors).toEqual([])
+  })
 })
 
 describe('repair/validate: common field-name aliases (batch)', () => {
