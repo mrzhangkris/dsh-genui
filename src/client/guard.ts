@@ -386,10 +386,10 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'callout': {
-      // `text` is accepted as a `content` alias (common hand-written spec
-      // mistake); `type_` is accepted as a `tone` alias. `type` itself
+      // `text`/`body` are accepted as `content` aliases (common hand-written
+      // spec mistakes); `type_` is accepted as a `tone` alias. `type` itself
       // cannot alias tone — it's the discriminator field.
-      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
+      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString)
       if (content === undefined) return null
       return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
@@ -1415,8 +1415,8 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (!Array.isArray(v.series)) errors.push(`${at}: type 'plot' requires series (array)`)
       break
     case 'callout':
-      // `text` alias mirrors repair: a text-only callout is valid.
-      if (typeof v.content !== 'string' && typeof v.text !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
+      // `text`/`body` aliases mirror repair.
+      if (typeof v.content !== 'string' && typeof v.text !== 'string' && typeof v.body !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
       break
     case 'steps':
       if (!Array.isArray(v.steps) && !Array.isArray(v.items)) errors.push(`${at}: type 'steps' requires steps (array)`)
