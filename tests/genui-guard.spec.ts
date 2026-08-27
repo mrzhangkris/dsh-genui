@@ -2,7 +2,9 @@
 // Pure node tests — no DOM. The fence path runs every body through
 // `repairGenuiSpec` before rendering, so these invariants protect the UI.
 import { describe, expect, it } from 'vitest'
-import { GENUI_LIMITS, countDeclaredGenuiNodes, countGenuiNodes, repairGenuiSpec, validateGenuiSpec } from '../src/client/guard.ts'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { GENUI_LIMITS, GENUI_NODE_TYPES, countDeclaredGenuiNodes, countGenuiNodes, repairGenuiSpec, validateGenuiSpec } from '../src/client/guard.ts'
 import { type GenuiNode, type GenuiList, isGenuiSpec, parseGenuiSpec } from '../src/client/spec.ts'
 
 const text = (content: string) => ({ type: 'text', content })
@@ -677,5 +679,27 @@ describe('validate: divider/spacer no longer flagged unknown', () => {
     const r = validateGenuiSpec({ items: [{ type: 'divider' }, { type: 'spacer' }] })
     expect(r.ok).toBe(true)
     expect(r.errors).toEqual([])
+  })
+})
+
+describe('GENUI_NODE_TYPES ↔ repair ↔ validator ↔ render 四方一致', () => {
+  // 防 divider 类复发：白名单里的每个类型，repair/validator/渲染器都必须有 case。
+  // 新增组件只改一处时，此测试当场红。
+  const src = readFileSync(join(process.cwd(), 'src/client/guard.ts'), 'utf8')
+  const renderSrc = readFileSync(join(process.cwd(), 'src/client/blocks/render-node.tsx'), 'utf8')
+  const repairCases = new Set([...src.matchAll(/case '([a-z0-9-]+)'/g)].map(m => m[1]))
+  const validatorCases = new Set([...src.matchAll(/case '([a-z0-9-]+)'/g)].map(m => m[1]))
+  const renderCases = new Set([...renderSrc.matchAll(/case '([a-z0-9-]+)'/g)].map(m => m[1]))
+
+  for (const t of GENUI_NODE_TYPES) {
+    it(`type '${t}' has repair + validator + render cases`, () => {
+      expect(repairCases.has(t), `repair 缺 case '${t}'`).toBe(true)
+      expect(validatorCases.has(t), `validator 缺 case '${t}'`).toBe(true)
+      expect(renderCases.has(t), `render-node 缺 case '${t}'`).toBe(true)
+    })
+  }
+
+  it('repair 不处理白名单之外的 type', () => {
+    for (const t of repairCases) expect(GENUI_NODE_TYPES.has(t), `repair 有白名单外 '${t}'`).toBe(true)
   })
 })
