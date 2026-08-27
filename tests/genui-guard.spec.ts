@@ -632,3 +632,42 @@ describe('repair/validate: callout text→content & type_→tone aliases', () =>
     expect(r.errors.join('\n')).toContain('content')
   })
 })
+
+describe('repair/validate: common field-name aliases (batch)', () => {
+  // 每个 [变体 spec 的 items[0], 期望修复后的 items[0]]
+  const cases: Array<[unknown, unknown]> = [
+    [{ type: 'button', text: '点我' }, { type: 'button', label: '点我' }],
+    [{ type: 'select', choices: ['a', 'b'] }, { type: 'select', options: ['a', 'b'] }],
+    [{ type: 'radio', label: 'Q', choices: ['a', 'b'] }, { type: 'radio', label: 'Q', options: ['a', 'b'] }],
+    [{ type: 'quiz', question: 'Q', choices: [{ label: 'a' }] }, { type: 'quiz', question: 'Q', options: [{ label: 'a' }] }],
+    [{ type: 'steps', items: [{ title: 's' }] }, { type: 'steps', steps: [{ title: 's' }] }],
+    [{ type: 'keyvalue', items: [{ key: 'k', value: 'v' }] }, { type: 'keyvalue', pairs: [{ key: 'k', value: 'v' }] }],
+    [{ type: 'keyvalue', data: [{ key: 'k', value: 'v' }] }, { type: 'keyvalue', pairs: [{ key: 'k', value: 'v' }] }],
+    [{ type: 'list', children: ['a', 'b'] }, { type: 'list', items: ['a', 'b'] }],
+    [{ type: 'progress', percent: 50 }, { type: 'progress', value: 50 }],
+    [{ type: 'stat', label: 'L', val: '9' }, { type: 'stat', label: 'L', value: '9' }],
+    [{ type: 'json', data: { a: 1 } }, { type: 'json', value: { a: 1 } }],
+    [{ type: 'copy', content: 'x' }, { type: 'copy', text: 'x' }],
+    [{ type: 'scene3d', objects: [{ shape: 'box' }] }, { type: 'scene3d', meshes: [{ shape: 'box' }] }],
+    [{ type: 'chart', points: [{ label: 'a', value: 1 }] }, { type: 'chart', data: [{ label: 'a', value: 1 }], series: undefined }],
+    [{ type: 'mermaid', source: 'graph TD' }, { type: 'mermaid', code: 'graph TD' }],
+    [{ type: 'timeline', entries: [{ title: 'e' }] }, { type: 'timeline', items: [{ title: 'e' }] }],
+    [{ type: 'audio', url: 'https://x/a.mp3' }, { type: 'audio', src: 'https://x/a.mp3' }],
+    [{ type: 'video', url: 'https://x/a.mp4' }, { type: 'video', src: 'https://x/a.mp4' }],
+  ]
+
+  it('repairs every alias variant and validator stays silent', () => {
+    for (const [variant, expected] of cases) {
+      const rep = repairGenuiSpec({ items: [variant] })
+      expect(rep, `repair ${JSON.stringify(variant)}`).not.toBeNull()
+      expect(rep!.items[0], `repair ${JSON.stringify(variant)}`).toEqual(expected)
+      const val = validateGenuiSpec({ items: [variant] })
+      expect(val.ok, `validate ${JSON.stringify(variant)} -> ${JSON.stringify(val.errors)}`).toBe(true)
+    }
+  })
+
+  it('canonical field wins when both present', () => {
+    const rep = repairGenuiSpec({ items: [{ type: 'chart', data: [{ label: 'a', value: 1 }], points: [{ label: 'b', value: 2 }] }] })
+    expect(rep?.items[0]).toEqual({ type: 'chart', data: [{ label: 'a', value: 1 }], series: undefined })
+  })
+})

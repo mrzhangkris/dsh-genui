@@ -242,7 +242,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'card', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'button': {
-      const label = str(v.label, GENUI_LIMITS.maxString)
+      const label = str(v.label, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
       if (label === undefined) return null
       return {
         type: 'button', label,
@@ -265,7 +265,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'select': {
-      const options = repairStrings(v.options, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
+      const options = repairStrings(v.options ?? v.choices, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
       if (options === undefined) return null
       return {
         type: 'select', options,
@@ -286,7 +286,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'link', label, ...opt('href', safeHref(v.href)) }
     }
     case 'audio': {
-      const src = safeMediaSrc(v.src)
+      const src = safeMediaSrc(v.src ?? v.url)
       if (src === undefined) return null
       return {
         type: 'audio', src,
@@ -295,7 +295,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'video': {
-      const src = safeMediaSrc(v.src)
+      const src = safeMediaSrc(v.src ?? v.url)
       if (src === undefined) return null
       return {
         type: 'video', src,
@@ -313,12 +313,12 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
     }
     case 'stat': {
       const label = str(v.label, GENUI_LIMITS.maxString)
-      const value = str(v.value, 128)
+      const value = str(v.value, 128) ?? str(v.val, 128)
       if (label === undefined || value === undefined) return null
       return { type: 'stat', label, value, ...opt('delta', str(v.delta, 64)) }
     }
     case 'progress': {
-      const value = num(v.value, 0, 100)
+      const value = num(v.value ?? v.percent, 0, 100)
       if (value === undefined) return null
       return { type: 'progress', value, ...opt('label', str(v.label, GENUI_LIMITS.maxString)), ...opt('valueLabel', str(v.valueLabel, 64)) }
     }
@@ -330,7 +330,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'avatar', name, ...opt('color', color(v.color)) }
     }
     case 'list': {
-      const items = repairListItems(v.items, GENUI_LIMITS.maxListItems, ctx, depth + 1)
+      const items = repairListItems(v.items ?? v.children, GENUI_LIMITS.maxListItems, ctx, depth + 1)
       if (items === undefined) return null
       return { type: 'list', items }
     }
@@ -360,7 +360,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'table', columns, rows }
     }
     case 'chart': {
-      const data = repairChartData(v.data, GENUI_LIMITS.maxChartPoints)
+      const data = repairChartData(v.data ?? v.points, GENUI_LIMITS.maxChartPoints)
       const series = Array.isArray(v.series) ? repairSeries(v.series, GENUI_LIMITS.maxPlotSeries, GENUI_LIMITS.maxChartPoints) : undefined
       // `data` is required by the type but grouped bars may ship `series`
       // alone; a series-only chart gets an empty data array (the renderer
@@ -394,12 +394,12 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'steps': {
-      const steps = repairSteps(v.steps)
+      const steps = repairSteps(v.steps ?? v.items)
       if (steps === undefined) return null
       return { type: 'steps', steps, ...opt('current', int(v.current, 0, steps.length)) }
     }
     case 'keyvalue': {
-      const pairs = repairPairs(v.pairs, GENUI_LIMITS.maxKeyValuePairs)
+      const pairs = repairPairs(v.pairs ?? v.items ?? v.data, GENUI_LIMITS.maxKeyValuePairs)
       if (pairs === undefined) return null
       return { type: 'keyvalue', pairs }
     }
@@ -414,15 +414,16 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       // single node pin the main thread (echart options carry three caps;
       // json had none). Oversized values DROP the whole node — truncation
       // would produce invalid JSON.
-      if (!('value' in v)) return null
+      if (!('value' in v) && !('data' in v)) return null
+      const raw = v.value ?? v.data
       let serialized: string
       try {
-        serialized = JSON.stringify(v.value) ?? ''
+        serialized = JSON.stringify(raw) ?? ''
       } catch {
         return null
       }
       if (serialized.length > GENUI_LIMITS.maxJsonValue) return null
-      return { type: 'json', value: v.value }
+      return { type: 'json', value: raw }
     }
     case 'code': {
       const code = str(v.code, GENUI_LIMITS.maxCode)
@@ -430,7 +431,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'code', code, ...opt('lang', str(v.lang, 64)) }
     }
     case 'radio': {
-      const options = repairStrings(v.options, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
+      const options = repairStrings(v.options ?? v.choices, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
       if (options === undefined) return null
       return {
         type: 'radio', options,
@@ -503,17 +504,17 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'accordion', items }
     }
     case 'copy': {
-      const text = str(v.text, GENUI_LIMITS.maxCode)
+      const text = str(v.text, GENUI_LIMITS.maxCode) ?? str(v.content, GENUI_LIMITS.maxCode)
       if (text === undefined) return null
       return { type: 'copy', text, ...opt('label', str(v.label, 128)) }
     }
     case 'mermaid': {
-      const code = str(v.code, GENUI_LIMITS.maxMermaid)
+      const code = str(v.code, GENUI_LIMITS.maxMermaid) ?? str(v.source, GENUI_LIMITS.maxMermaid)
       if (code === undefined) return null
       return { type: 'mermaid', code }
     }
     case 'scene3d': {
-      const meshes = repairMeshes(v.meshes)
+      const meshes = repairMeshes(v.meshes ?? v.objects)
       if (meshes === undefined) return null
       return { type: 'scene3d', meshes, ...opt('title', str(v.title, GENUI_LIMITS.maxString)), ...opt('ambient', num(v.ambient, 0, 2)), ...opt('background', color(v.background)) }
     }
@@ -522,7 +523,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return repaired
     }
     case 'timeline': {
-      const items = repairTimeline(v.items, GENUI_LIMITS.maxTimelineItems)
+      const items = repairTimeline(v.items ?? v.entries, GENUI_LIMITS.maxTimelineItems)
       if (items === undefined) return null
       return { type: 'timeline', items }
     }
@@ -538,7 +539,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
     }
     case 'quiz': {
       const question = str(v.question, GENUI_LIMITS.maxString)
-      const options = repairQuizOptions(v.options)
+      const options = repairQuizOptions(v.options ?? v.choices)
       if (question === undefined || options === undefined) return null
       return {
         type: 'quiz', question, options,
@@ -1317,11 +1318,11 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (type === 'grid') isNum('cols')
       break
     case 'button': case 'checkbox': case 'link': case 'switch':
-      if (typeof v.label !== 'string') errors.push(`${at}: type '${type}' requires label (string)`)
+      if (typeof v.label !== 'string' && typeof v.text !== 'string') errors.push(`${at}: type '${type}' requires label (string)`)
       isStr('label')
       break
     case 'audio': case 'video':
-      if (typeof v.src !== 'string') errors.push(`${at}: type '${type}' requires src (string)`)
+      if (typeof v.src !== 'string' && typeof v.url !== 'string') errors.push(`${at}: type '${type}' requires src (string)`)
       isStr('src')
       isStr('alt')
       if (type === 'video') isStr('poster')
@@ -1334,7 +1335,7 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       isStr('label'); isStr('placeholder'); isStr('value')
       break
     case 'select': case 'radio':
-      if (!Array.isArray(v.options)) errors.push(`${at}: type '${type}' requires options (array)`)
+      if (!Array.isArray(v.options) && !Array.isArray(v.choices)) errors.push(`${at}: type '${type}' requires options (array)`)
       break
     case 'submit':
       if (typeof v.label !== 'string') errors.push(`${at}: type 'submit' requires label (string)`)
@@ -1352,11 +1353,12 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       break
     case 'stat':
       if (typeof v.label !== 'string') errors.push(`${at}: type 'stat' requires label (string)`)
-      if (typeof v.value !== 'string') errors.push(`${at}: type 'stat' requires value (string)`)
+      if (typeof v.value !== 'string' && typeof v.val !== 'string') errors.push(`${at}: type 'stat' requires value (string)`)
       isStr('delta')
       break
     case 'progress':
-      if (typeof v.value !== 'number' || !Number.isFinite(v.value) || (v.value as number) < 0 || (v.value as number) > 100) {
+      const progVal = v.value ?? v.percent
+      if (typeof progVal !== 'number' || !Number.isFinite(progVal) || (progVal as number) < 0 || (progVal as number) > 100) {
         errors.push(`${at}: type 'progress' requires value (number 0..100)`)
       }
       isNum('value')
@@ -1365,7 +1367,7 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (typeof v.name !== 'string') errors.push(`${at}: type 'avatar' requires name (string)`)
       break
     case 'list':
-      if (!Array.isArray(v.items)) errors.push(`${at}: type 'list' requires items (array)`)
+      if (!Array.isArray(v.items) && !Array.isArray(v.children)) errors.push(`${at}: type 'list' requires items (array)`)
       if (Array.isArray(v.items)) {
         // Descend into typed children so validation agrees with repair and
         // rendering (they recurse into list items as GenuiNodes). Strings and
@@ -1384,7 +1386,7 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (!Array.isArray(v.rows)) errors.push(`${at}: type 'table' requires rows (array)`)
       break
     case 'chart':
-      if (!Array.isArray(v.data) && !Array.isArray(v.series)) errors.push(`${at}: type 'chart' requires data or series (array)`)
+      if (!Array.isArray(v.data) && !Array.isArray(v.points) && !Array.isArray(v.series)) errors.push(`${at}: type 'chart' requires data or series (array)`)
       break
     case 'tabs': {
       if (!Array.isArray(v.tabs)) errors.push(`${at}: type 'tabs' requires tabs (array)`)
@@ -1413,16 +1415,16 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (typeof v.content !== 'string' && typeof v.text !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
       break
     case 'steps':
-      if (!Array.isArray(v.steps)) errors.push(`${at}: type 'steps' requires steps (array)`)
+      if (!Array.isArray(v.steps) && !Array.isArray(v.items)) errors.push(`${at}: type 'steps' requires steps (array)`)
       break
     case 'keyvalue':
-      if (!Array.isArray(v.pairs)) errors.push(`${at}: type 'keyvalue' requires pairs (array)`)
+      if (!Array.isArray(v.pairs) && !Array.isArray(v.items) && !Array.isArray(v.data)) errors.push(`${at}: type 'keyvalue' requires pairs (array)`)
       break
     case 'diff':
       if (!Array.isArray(v.diffs)) errors.push(`${at}: type 'diff' requires diffs (array)`)
       break
     case 'json':
-      if (!('value' in v)) errors.push(`${at}: type 'json' requires value`)
+      if (!('value' in v) && !('data' in v)) errors.push(`${at}: type 'json' requires value`)
       break
     case 'code':
       if (typeof v.code !== 'string') errors.push(`${at}: type 'code' requires code (string)`)
@@ -1439,16 +1441,16 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       }
       break
     case 'copy':
-      if (typeof v.text !== 'string') errors.push(`${at}: type 'copy' requires text (string)`)
+      if (typeof v.text !== 'string' && typeof v.content !== 'string') errors.push(`${at}: type 'copy' requires text (string)`)
       break
     case 'mermaid':
-      if (typeof v.code !== 'string') errors.push(`${at}: type 'mermaid' requires code (string)`)
+      if (typeof v.code !== 'string' && typeof v.source !== 'string') errors.push(`${at}: type 'mermaid' requires code (string)`)
       break
     case 'scene3d':
-      if (!Array.isArray(v.meshes)) errors.push(`${at}: type 'scene3d' requires meshes (array)`)
+      if (!Array.isArray(v.meshes) && !Array.isArray(v.objects)) errors.push(`${at}: type 'scene3d' requires meshes (array)`)
       break
     case 'timeline':
-      if (!Array.isArray(v.items)) errors.push(`${at}: type 'timeline' requires items (array)`)
+      if (!Array.isArray(v.items) && !Array.isArray(v.entries)) errors.push(`${at}: type 'timeline' requires items (array)`)
       break
     case 'file-tree':
       if (!Array.isArray(v.items)) errors.push(`${at}: type 'file-tree' requires items (array)`)
@@ -1458,7 +1460,7 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       break
     case 'quiz':
       if (typeof v.question !== 'string') errors.push(`${at}: type 'quiz' requires question (string)`)
-      if (!Array.isArray(v.options)) errors.push(`${at}: type 'quiz' requires options (array)`)
+      if (!Array.isArray(v.options) && !Array.isArray(v.choices)) errors.push(`${at}: type 'quiz' requires options (array)`)
       break
     case 'diagram':
       if (typeof v.kind !== 'string') errors.push(`${at}: type 'diagram' requires kind (string)`)
