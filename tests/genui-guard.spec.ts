@@ -573,3 +573,33 @@ describe('repairGenuiSpec: json value size budget', () => {
     expect(() => repairGenuiSpec({ items: [{ type: 'json', value: circular }] })).not.toThrow()
   })
 })
+
+describe('repair/validate: table headers → columns alias', () => {
+  it('repairs a headers-only table into columns', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'table', headers: ['列1', '列2'], rows: [['值1', '值2']] }],
+    })
+    expect(spec?.items[0]).toEqual({ type: 'table', columns: ['列1', '列2'], rows: [['值1', '值2']] })
+  })
+
+  it('validator accepts headers as a columns alias (no false warning)', () => {
+    const result = validateGenuiSpec({
+      items: [{ type: 'table', headers: ['a', 'b'], rows: [['1', '2']] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('still reports a table missing both columns and headers', () => {
+    const result = validateGenuiSpec({ items: [{ type: 'table', rows: [['1']] }] })
+    expect(result.ok).toBe(false)
+    expect(result.errors.join('\n')).toContain('columns')
+  })
+
+  it('object-style headers flatten the same as object columns', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'table', headers: [{ title: '名称', key: 'name' }], rows: [{ name: '张三' }] }],
+    })
+    expect(spec?.items[0]).toEqual({ type: 'table', columns: ['名称'], rows: [['张三']] })
+  })
+})
