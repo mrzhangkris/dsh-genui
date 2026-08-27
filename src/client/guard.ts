@@ -335,7 +335,10 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'list', items }
     }
     case 'table': {
-      let rawCols = v.columns as unknown
+      // `headers` is accepted as a `columns` alias — a common hand-written
+      // spec mistake; the same tolerance as the `data`→`rows` alias below.
+      const declaredCols = v.columns !== undefined ? v.columns : (v as Record<string, unknown>).headers
+      let rawCols = declaredCols as unknown
       let rawRows = v.rows !== undefined ? v.rows : (v as Record<string, unknown>).data
       // Self-heal model-shaped tables: antd-style object columns
       // ({title,key}) become header strings, and object-array rows (or a
@@ -346,8 +349,8 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
         rawCols = rawCols.map(c => columnHeaderText(c))
       }
       if (Array.isArray(rawRows) && rawRows.length > 0 && typeof rawRows[0] === 'object' && rawRows[0] !== null && !Array.isArray(rawRows[0])) {
-        const keys = Array.isArray(v.columns) && v.columns.length > 0 && typeof v.columns[0] === 'object' && v.columns[0] !== null
-          ? v.columns.map(c => columnKeyOf(c)).filter((k): k is string => k !== undefined)
+        const keys = Array.isArray(declaredCols) && declaredCols.length > 0 && typeof declaredCols[0] === 'object' && declaredCols[0] !== null
+          ? (declaredCols as Array<Record<string, unknown>>).map(c => columnKeyOf(c)).filter((k): k is string => k !== undefined)
           : Object.keys(rawRows[0] as Record<string, unknown>)
         rawRows = rawRows.map(row => keys.map(k => cellText((row as Record<string, unknown>)[k])))
       }
@@ -1373,7 +1376,8 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       }
       break
     case 'table':
-      if (!Array.isArray(v.columns)) errors.push(`${at}: type 'table' requires columns (array)`)
+      // `headers` alias mirrors repair: a headers-only table is valid.
+      if (!Array.isArray(v.columns) && !Array.isArray((v as Record<string, unknown>).headers)) errors.push(`${at}: type 'table' requires columns (array)`)
       if (!Array.isArray(v.rows)) errors.push(`${at}: type 'table' requires rows (array)`)
       break
     case 'chart':
