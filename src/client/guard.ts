@@ -230,16 +230,16 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'text', content, ...opt('size', enu(v.size, TEXT_SIZES)), ...opt('center', v.center === true ? true : undefined) }
     }
     case 'row': {
-      return { type: 'row', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
+      return { type: 'row', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
     }
     case 'col': {
-      return { type: 'col', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('gap', num(v.gap, 0, 96)) }
+      return { type: 'col', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('gap', num(v.gap, 0, 96)) }
     }
     case 'grid': {
-      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairItems(v.items ?? v.children, ctx, depth + 1) }
+      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1) }
     }
     case 'card': {
-      return { type: 'card', items: repairItems(v.items ?? v.children, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
+      return { type: 'card', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'button': {
       const label = str(v.label, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
@@ -386,10 +386,8 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'callout': {
-      // `text`/`body` are accepted as `content` aliases (common hand-written
-      // spec mistakes); `type_` is accepted as a `tone` alias. `type` itself
-      // cannot alias tone — it's the discriminator field.
-      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString)
+      // `text`/`body`/`description` are accepted as `content` aliases.
+      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString)
       if (content === undefined) return null
       return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
@@ -1311,10 +1309,10 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       isStr('text')
       break
     case 'row': case 'col': case 'card': case 'grid':
-      if (!Array.isArray(v.items) && !Array.isArray(v.children)) {
+      if (!Array.isArray(v.items) && !Array.isArray(v.children) && !Array.isArray(v.columns)) {
         errors.push(`${at}: type '${type}' requires items (array)`)
       }
-      walk(v.items ?? v.children, depth + 1, `${at}.items`)
+      walk(v.items ?? v.children ?? v.columns, depth + 1, `${at}.items`)
       if (type === 'grid') isNum('cols')
       break
     case 'divider': case 'spacer':
@@ -1415,8 +1413,8 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (!Array.isArray(v.series)) errors.push(`${at}: type 'plot' requires series (array)`)
       break
     case 'callout':
-      // `text`/`body` aliases mirror repair.
-      if (typeof v.content !== 'string' && typeof v.text !== 'string' && typeof v.body !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
+      // `text`/`body`/`description` aliases mirror repair.
+      if (typeof v.content !== 'string' && typeof v.text !== 'string' && typeof v.body !== 'string' && typeof v.description !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
       break
     case 'steps':
       if (!Array.isArray(v.steps) && !Array.isArray(v.items)) errors.push(`${at}: type 'steps' requires steps (array)`)
