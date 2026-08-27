@@ -67,4 +67,18 @@ describe('GenUI table overflow', () => {
     expect(match![1]).toContain('backwards')
     expect(match![1]).not.toContain('both')
   })
+
+  it('no animation pins a transform past its end (issues #55/#69)', () => {
+    // fill-mode both/forwards keeps the end keyframe (translateY(0)) applied
+    // forever: the element keeps a live transform layer, and hover-triggered
+    // repaints nearby then shift adjacent content on Windows Chromium.
+    // Every entrance/pop animation must release via backwards/none — natural
+    // styles take over after the animation ends.
+    const css = readFileSync(join(process.cwd(), 'src/client/GenuiBlock.module.css'), 'utf8')
+    const animations = [...css.matchAll(/animation:\s*([^;]+);/g)].map(m => m[1]!)
+    expect(animations.length).toBeGreaterThan(0)
+    for (const value of animations) {
+      expect(value, `animation "${value}" must not pin its end state`).not.toMatch(/\b(both|forwards)\b/)
+    }
+  })
 })

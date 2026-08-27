@@ -958,8 +958,11 @@ button.ftNameBtn[aria-expanded] { cursor: pointer; }
 }
 
 /* "✓ 已触发" confirmation chip: appears next to the button without layout
-   shift risk (it inherits the flex row's gap). */
-.btnSent { animation: genuiPopIn 0.2s ease both; }
+   shift risk (it inherits the flex row's gap). `backwards`, not `both`: the
+   chip's natural (post-animation) style is already visible/no-transform, so
+   pinning the end keyframe would only keep a translateY(0) transform layer
+   alive forever — the exact mechanism behind issues #55/#69. */
+.btnSent { animation: genuiPopIn 0.2s ease backwards; }
 
 /* 尊重用户的减弱动效偏好 */
 @media (prefers-reduced-motion: reduce) {
