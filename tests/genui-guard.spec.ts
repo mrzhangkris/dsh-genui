@@ -573,3 +573,62 @@ describe('repairGenuiSpec: json value size budget', () => {
     expect(() => repairGenuiSpec({ items: [{ type: 'json', value: circular }] })).not.toThrow()
   })
 })
+
+describe('repair/validate: table headers → columns alias', () => {
+  it('repairs a headers-only table into columns', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'table', headers: ['列1', '列2'], rows: [['值1', '值2']] }],
+    })
+    expect(spec?.items[0]).toEqual({ type: 'table', columns: ['列1', '列2'], rows: [['值1', '值2']] })
+  })
+
+  it('validator accepts headers as a columns alias (no false warning)', () => {
+    const result = validateGenuiSpec({
+      items: [{ type: 'table', headers: ['a', 'b'], rows: [['1', '2']] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('still reports a table missing both columns and headers', () => {
+    const result = validateGenuiSpec({ items: [{ type: 'table', rows: [['1']] }] })
+    expect(result.ok).toBe(false)
+    expect(result.errors.join('\n')).toContain('columns')
+  })
+
+  it('object-style headers flatten the same as object columns', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'table', headers: [{ title: '名称', key: 'name' }], rows: [{ name: '张三' }] }],
+    })
+    expect(spec?.items[0]).toEqual({ type: 'table', columns: ['名称'], rows: [['张三']] })
+  })
+})
+
+describe('repair/validate: callout text→content & type_→tone aliases', () => {
+  it('repairs a callout with text into content', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', text: '正文', title: '标题' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文', title: '标题' })
+  })
+
+  it('repairs type_ into tone', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', type_: 'success', content: 'x' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: 'x', tone: 'success' })
+  })
+
+  it('validator accepts text (no false warning)', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'callout', text: 'x' }] })
+    expect(r.ok).toBe(true)
+    expect(r.errors).toEqual([])
+  })
+
+  it('canonical content wins when both text and content present', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', content: '正文', text: '备选' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文' })
+  })
+
+  it('still reports a callout with neither content nor text', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'callout', title: 'x' }] })
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toContain('content')
+  })
+})
