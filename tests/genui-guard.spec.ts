@@ -603,3 +603,32 @@ describe('repair/validate: table headers → columns alias', () => {
     expect(spec?.items[0]).toEqual({ type: 'table', columns: ['名称'], rows: [['张三']] })
   })
 })
+
+describe('repair/validate: callout text→content & type_→tone aliases', () => {
+  it('repairs a callout with text into content', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', text: '正文', title: '标题' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文', title: '标题' })
+  })
+
+  it('repairs type_ into tone', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', type_: 'success', content: 'x' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: 'x', tone: 'success' })
+  })
+
+  it('validator accepts text (no false warning)', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'callout', text: 'x' }] })
+    expect(r.ok).toBe(true)
+    expect(r.errors).toEqual([])
+  })
+
+  it('canonical content wins when both text and content present', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', content: '正文', text: '备选' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文' })
+  })
+
+  it('still reports a callout with neither content nor text', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'callout', title: 'x' }] })
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toContain('content')
+  })
+})
