@@ -714,3 +714,29 @@ describe('GENUI_NODE_TYPES ↔ repair ↔ validator ↔ render 四方一致', ()
     for (const t of repairCases) expect(GENUI_NODE_TYPES.has(t), `repair 有白名单外 '${t}'`).toBe(true)
   })
 })
+
+describe('repair/validate: row columns→items & callout description→content', () => {
+  it('row accepts columns as items alias', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'row', columns: [{ type: 'text', content: 'a' }, { type: 'text', content: 'b' }], wrap: true }] })
+    expect(spec?.items[0]).toEqual({ type: 'row', items: [{ type: 'text', content: 'a' }, { type: 'text', content: 'b' }], wrap: true })
+    const v = validateGenuiSpec({ items: [{ type: 'row', columns: [{ type: 'text', content: 'a' }] }] })
+    expect(v.ok).toBe(true)
+  })
+
+  it('grid accepts columns as items alias (cols 仍独立)', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'grid', cols: 2, columns: [{ type: 'text', content: 'x' }] }] })
+    expect(spec?.items[0]).toEqual({ type: 'grid', cols: 2, items: [{ type: 'text', content: 'x' }] })
+  })
+
+  it('callout accepts description as content alias', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', description: '分类依据', title: '标题' }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '分类依据', title: '标题' })
+    const v = validateGenuiSpec({ items: [{ type: 'callout', description: 'x' }] })
+    expect(v.ok).toBe(true)
+  })
+
+  it('canonical items wins when both items and columns present', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'row', items: [{ type: 'text', content: 'A' }], columns: [{ type: 'text', content: 'B' }] }] })
+    expect(spec?.items[0]).toEqual({ type: 'row', items: [{ type: 'text', content: 'A' }] })
+  })
+})
