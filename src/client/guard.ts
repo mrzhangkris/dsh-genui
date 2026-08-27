@@ -1317,6 +1317,10 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       walk(v.items ?? v.children, depth + 1, `${at}.items`)
       if (type === 'grid') isNum('cols')
       break
+    case 'divider': case 'spacer':
+      // No fields; a missing case here fell to `default` and wrongly
+      // reported these as "unknown type" despite repair rendering them.
+      break
     case 'button': case 'checkbox': case 'link': case 'switch':
       if (typeof v.label !== 'string' && typeof v.text !== 'string') errors.push(`${at}: type '${type}' requires label (string)`)
       isStr('label')

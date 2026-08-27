@@ -671,3 +671,11 @@ describe('repair/validate: common field-name aliases (batch)', () => {
     expect(rep?.items[0]).toEqual({ type: 'chart', data: [{ label: 'a', value: 1 }], series: undefined })
   })
 })
+
+describe('validate: divider/spacer no longer flagged unknown', () => {
+  it('validator accepts divider and spacer (repair/validator parity)', () => {
+    const r = validateGenuiSpec({ items: [{ type: 'divider' }, { type: 'spacer' }] })
+    expect(r.ok).toBe(true)
+    expect(r.errors).toEqual([])
+  })
+})
