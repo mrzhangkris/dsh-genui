@@ -747,3 +747,12 @@ describe('repair: callout level→tone alias', () => {
     expect(spec?.items[0]).toEqual({ type: 'callout', content: 'x', tone: 'success' })
   })
 })
+
+describe('repair/validate: code value→code alias', () => {
+  it('accepts value as code', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'code', lang: 'ts', value: 'const a = 1' }] })
+    expect(spec?.items[0]).toEqual({ type: 'code', lang: 'ts', code: 'const a = 1' })
+    const v = validateGenuiSpec({ items: [{ type: 'code', value: 'x' }] })
+    expect(v.ok).toBe(true)
+  })
+})
