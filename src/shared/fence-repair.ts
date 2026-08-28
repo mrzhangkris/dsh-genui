@@ -76,11 +76,28 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
   // `:`; a `=` after a closed string is never legal JSON, so it is safe to
   // rewrite. Set when a closing quote's next non-space char is `=`.
   let pendingEqualsColon = false
+  // HTML-attribute form where the KEY quote is never closed: `"tone="info"`
+  // — the `=` sits INSIDE the key string. Track whether the current string
+  // opened at a key position (after `{`/`,`) so a `=` inside it can close
+  // the key and become `:`. A `=` inside a VALUE string stays literal.
+  let expectingKey = true
+  let thisStringIsKey = false
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
     if (pendingEqualsColon && ch === '=') {
       out += ':'
       pendingEqualsColon = false
+      repairs++
+      continue
+    }
+    if (inString && ch === '=' && thisStringIsKey) {
+      // Unclosed key string hits `=`: close the key, emit the separator,
+      // and switch to value context (`"tone="info"` → `"tone":"info"`).
+      out += '"'
+      out += ':'
+      inString = false
+      thisStringIsKey = false
+      expectingKey = false
       repairs++
       continue
     }
@@ -97,6 +114,7 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
     if (ch === '"') {
       if (!inString) {
         inString = true
+        thisStringIsKey = expectingKey
         out += ch
         continue
       }
@@ -124,6 +142,11 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
         repairs++
         continue
       }
+    }
+    // Key/value context for the `=`-inside-key heal (outside strings only).
+    if (!inString) {
+      if (ch === '{' || ch === ',') expectingKey = true
+      else if (ch === ':') expectingKey = false
     }
     out += ch
   }
@@ -182,11 +205,23 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
   let repairs = 0
   // `"key"=` → `:` (same tier-1 fix, folded into this pass).
   let pendingEqualsColon = false
+  // `"key="value"` (unclosed key quote before `=`) — same heal as tier-1.
+  let expectingKey = true
+  let thisStringIsKey = false
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
     if (pendingEqualsColon && ch === '=') {
       out += ':'
       pendingEqualsColon = false
+      repairs++
+      continue
+    }
+    if (inString && ch === '=' && thisStringIsKey) {
+      out += '"'
+      out += ':'
+      inString = false
+      thisStringIsKey = false
+      expectingKey = false
       repairs++
       continue
     }
@@ -222,16 +257,19 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
     }
     if (ch === '"') {
       inString = true
+      thisStringIsKey = expectingKey
       out += ch
       continue
     }
     if (ch === '{') {
       stack.push('}')
+      expectingKey = true
       out += ch
       continue
     }
     if (ch === '[') {
       stack.push(']')
+      expectingKey = true
       out += ch
       continue
     }
@@ -258,6 +296,9 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
         repairs++
         continue
       }
+      expectingKey = true
+    } else if (ch === ':' && !inString) {
+      expectingKey = false
     }
     out += ch
   }

@@ -77,3 +77,27 @@ describe('completeFenceJson: dangling "type" after root close (手写括号错�
     expect(completeFenceJson('{"a":"1"},"type":"list",garbage')).toBeNull()
   })
 })
+
+describe('repair: `"key="value"` (unclosed key quote before =)', () => {
+  it('heals the user-typed HTML form via tier-1', () => {
+    const r = repairFenceJson('{"type":"callout","tone="info","content":"x"}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ type: 'callout', tone: 'info', content: 'x' })
+  })
+
+  it('heals it via tier-2 with a missing closer too', () => {
+    const r = completeFenceJson('{"type":"callout","tone="info","content":"x"')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ type: 'callout', tone: 'info', content: 'x' })
+  })
+
+  it('leaves `=` inside VALUE strings untouched', () => {
+    const r = repairFenceJson('{"a":"x=y","b" = "z"}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ a: 'x=y', b: 'z' })
+  })
+
+  it('does not corrupt valid JSON (returns null)', () => {
+    expect(repairFenceJson('{"a":"x=y","b":"z"}')).toBeNull()
+  })
+})
