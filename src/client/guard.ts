@@ -389,7 +389,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       // `text`/`body`/`description` are accepted as `content` aliases.
       const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString)
       if (content === undefined) return null
-      return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
+      return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_ ?? v.level, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'steps': {
       const steps = repairSteps(v.steps ?? v.items)
