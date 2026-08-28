@@ -72,8 +72,18 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
   let inString = false
   let escaped = false
   let repairs = 0
+  // `"key"=` (models writing HTML-style attributes) → the `=` must become
+  // `:`; a `=` after a closed string is never legal JSON, so it is safe to
+  // rewrite. Set when a closing quote's next non-space char is `=`.
+  let pendingEqualsColon = false
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
+    if (pendingEqualsColon && ch === '=') {
+      out += ':'
+      pendingEqualsColon = false
+      repairs++
+      continue
+    }
     if (escaped) {
       out += ch
       escaped = false
@@ -94,9 +104,10 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
       let j = i + 1
       while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++
       const next = j < raw.length ? raw[j] : ''
-      if (next === ',' || next === ']' || next === '}' || next === ':' || next === '') {
+      if (next === ',' || next === ']' || next === '}' || next === ':' || next === '=' || next === '') {
         inString = false
         out += ch
+        pendingEqualsColon = next === '='
       } else {
         // Free-standing quote inside a value → escape it.
         out += '\\"'
@@ -153,8 +164,16 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
   let inString = false
   let escaped = false
   let repairs = 0
+  // `"key"=` → `:` (same tier-1 fix, folded into this pass).
+  let pendingEqualsColon = false
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
+    if (pendingEqualsColon && ch === '=') {
+      out += ':'
+      pendingEqualsColon = false
+      repairs++
+      continue
+    }
     if (escaped) {
       out += ch
       escaped = false
@@ -174,9 +193,10 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
       let j = i + 1
       while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++
       const next = j < raw.length ? raw[j] : ''
-      if (next === ',' || next === ']' || next === '}' || next === ':' || next === '') {
+      if (next === ',' || next === ']' || next === '}' || next === ':' || next === '=' || next === '') {
         inString = false
         out += ch
+        pendingEqualsColon = next === '='
       } else {
         // Free-standing quote inside a value → escape it (tier-1 fix).
         out += '\\"'
