@@ -389,7 +389,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       // `text`/`body`/`description` are accepted as `content` aliases.
       const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString)
       if (content === undefined) return null
-      return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
+      return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_ ?? v.level, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'steps': {
       const steps = repairSteps(v.steps ?? v.items)
@@ -424,7 +424,8 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'json', value: raw }
     }
     case 'code': {
-      const code = str(v.code, GENUI_LIMITS.maxCode)
+      // `value` is accepted as a `code` alias (hand-written spec mistake).
+      const code = str(v.code, GENUI_LIMITS.maxCode) ?? str(v.value, GENUI_LIMITS.maxCode)
       if (code === undefined) return null
       return { type: 'code', code, ...opt('lang', str(v.lang, 64)) }
     }
@@ -1429,7 +1430,8 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (!('value' in v) && !('data' in v)) errors.push(`${at}: type 'json' requires value`)
       break
     case 'code':
-      if (typeof v.code !== 'string') errors.push(`${at}: type 'code' requires code (string)`)
+      // `value` alias mirrors repair.
+      if (typeof v.code !== 'string' && typeof v.value !== 'string') errors.push(`${at}: type 'code' requires code (string)`)
       break
     case 'accordion':
       if (!Array.isArray(v.items)) errors.push(`${at}: type 'accordion' requires items (array)`)
