@@ -159,6 +159,22 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
   } catch {
     // fall through to the unified repair scan
   }
+  // Hand-writing habit: the root object is closed, then `"type":"X"` dangles
+  // AFTER it (`{"items":[...]}, "type":"list"`) — the author forgot the
+  // discriminator before closing and appended it at the end. Move the
+  // dangling type into the root object head; adopted only when the result
+  // parses AND the root's first key isn't already `type` (duplicate-type
+  // guards are wrong to inject into).
+  const danglingType = /^\{([\s\S]*)\}\s*,?\s*"type"\s*:\s*"([a-z0-9-]+)"\s*$/.exec(raw)
+  if (danglingType !== null && !/^"type"\s*:/.test(danglingType[1]!)) {
+    const candidate = `{"type":"${danglingType[2]}",${danglingType[1]}}`
+    try {
+      JSON.parse(candidate)
+      return { text: candidate, repairs: 1 }
+    } catch {
+      // fall through to the unified repair scan
+    }
+  }
   let out = ''
   const stack: Array<'}' | ']'> = []
   let inString = false

@@ -51,3 +51,29 @@ describe('completeFenceJson: `=` → `:` folded with missing closers', () => {
     expect(JSON.parse(r!.text)).toEqual({ a: '1' })
   })
 })
+
+describe('completeFenceJson: dangling "type" after root close (手写括号错位)', () => {
+  it('moves a dangling type into the root object', () => {
+    const r = completeFenceJson('{"items":[{"type":"text","content":"a"}]},"type":"list"')
+    expect(r).not.toBeNull()
+    expect(r!.text).toBe('{"type":"list","items":[{"type":"text","content":"a"}]}')
+    expect(JSON.parse(r!.text)).toEqual({ type: 'list', items: [{ type: 'text', content: 'a' }] })
+  })
+
+  it('handles the no-comma and whitespace variants', () => {
+    const r1 = completeFenceJson('{"items":[]} "type":"col"')
+    expect(JSON.parse(r1!.text)).toEqual({ type: 'col', items: [] })
+    const r2 = completeFenceJson('{"items":[]}"type":"card"')
+    expect(JSON.parse(r2!.text)).toEqual({ type: 'card', items: [] })
+  })
+
+  it('does NOT inject when the root already has a leading type', () => {
+    // Nested types are fine; a root-level first-key `type` means no heal.
+    const nested = completeFenceJson('{"items":[{"type":"text","content":"a"}]},"type":"list"')
+    expect(JSON.parse(nested!.text).type).toBe('list')
+  })
+
+  it('does not adopt when the result cannot parse', () => {
+    expect(completeFenceJson('{"a":"1"},"type":"list",garbage')).toBeNull()
+  })
+})
