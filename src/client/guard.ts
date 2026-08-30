@@ -1302,7 +1302,10 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
     const arr: unknown[] = []
     for (let i = 0; i < cap; i++) {
       const s = sanitizeEChartOption(v[i], depth + 1, budget)
-      if (s !== undefined) arr.push(s)
+      // A rejected element becomes a null placeholder instead of being
+      // dropped: index-aligned arrays (xAxis.data ↔ series.data) must keep
+      // their positions or every later label/data point would shift left.
+      arr.push(s !== undefined ? s : null)
     }
     return arr.length > 0 ? arr : undefined
   }
