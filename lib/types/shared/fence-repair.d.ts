@@ -60,6 +60,17 @@ export declare function repairFenceJson(raw: string): {
  * two-phase chain lost tier-1's partial work when its whole-body parse
  * failed, and re-scanning the raw text could not compose the repairs.
  * Adopted only when the completed body parses as whole JSON.
+ *
+ * Orphan siblings: a hand-written body may close a member VALUE array one
+ * bracket early and keep typing siblings after the next comma
+ * (`"rows":[[a],[b]],["c","d"]` — the `["c","d"]` is an orphan literal in
+ * object context, where only `"key":` pairs are legal). When the scan sees a
+ * `,` directly (modulo whitespace) after a just-closed value array and the
+ * next non-space char is `[` or `{`, it deletes that closer to reopen the
+ * array so the orphan becomes its next element. A value OBJECT closed early
+ * is deliberately NOT healed: deleting its `}` leaves the orphan's own
+ * `{...}` shell as a bare literal inside the object (`{"a":1,{"b":2}}`),
+ * which is still invalid — no single deletion can make it parse.
  */
 export declare function completeFenceJson(raw: string): {
     text: string;

@@ -101,3 +101,52 @@ describe('repair: `"key="value"` (unclosed key quote before =)', () => {
     expect(repairFenceJson('{"a":"x=y","b":"z"}')).toBeNull()
   })
 })
+
+describe('completeFenceJson: orphan array sibling merged back (孤儿数组元素并回前一个数组)', () => {
+  it('merges an orphan array sibling into the just-closed member value array', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]],["c","d"]}')
+    expect(r).not.toBeNull()
+    expect(r!.text).toBe('{"rows":[[1],[2],["c","d"]]}')
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c', 'd']] })
+  })
+
+  it('merges an orphan OBJECT sibling too (arrays accept any value)', () => {
+    const r = completeFenceJson('{"rows":[[1]],{"a":1}}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], { a: 1 }] })
+  })
+
+  it('composes with unterminated string + missing closers in one pass', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]],["c"')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c']] })
+  })
+
+  it('tolerates whitespace between the closer, comma, and orphan', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]] ,  ["c","d"]}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c', 'd']] })
+  })
+
+  it('does NOT merge when the stale closer is followed by other members', () => {
+    // The ] after [0] is long closed-over: "b":1 sits between it and the
+    // orphan, so merging would steal ["x"] into the "a" array. Must not adopt.
+    expect(completeFenceJson('{"a":[0],"b":1,["x"]}')).toBeNull()
+  })
+
+  it('does NOT heal a value OBJECT closed early (no single deletion helps)', () => {
+    expect(completeFenceJson('{"a":{"x":1},{"b":2}}')).toBeNull()
+  })
+
+  it('does NOT merge at the root array level (object-context-only heal)', () => {
+    expect(completeFenceJson('[[1],[2]],["c"]')).toBeNull()
+  })
+
+  it('does not corrupt VALID JSON that has commas before [ / { literals', () => {
+    // Legal member list commas are always followed by "key" strings, and a
+    // legal array-context comma before [ must stay untouched.
+    expect(repairFenceJson('{"a":[1],"b":[2]}')).toBeNull()
+    expect(repairFenceJson('{"m":[[1],[2]],"k":1}')).toBeNull()
+    expect(completeFenceJson('{"a":[1],"b":[2]}')).toBeNull()
+  })
+})

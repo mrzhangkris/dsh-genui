@@ -174,6 +174,17 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
  * two-phase chain lost tier-1's partial work when its whole-body parse
  * failed, and re-scanning the raw text could not compose the repairs.
  * Adopted only when the completed body parses as whole JSON.
+ *
+ * Orphan siblings: a hand-written body may close a member VALUE array one
+ * bracket early and keep typing siblings after the next comma
+ * (`"rows":[[a],[b]],["c","d"]` — the `["c","d"]` is an orphan literal in
+ * object context, where only `"key":` pairs are legal). When the scan sees a
+ * `,` directly (modulo whitespace) after a just-closed value array and the
+ * next non-space char is `[` or `{`, it deletes that closer to reopen the
+ * array so the orphan becomes its next element. A value OBJECT closed early
+ * is deliberately NOT healed: deleting its `}` leaves the orphan's own
+ * `{...}` shell as a bare literal inside the object (`{"a":1,{"b":2}}`),
+ * which is still invalid — no single deletion can make it parse.
  */
 export function completeFenceJson(raw: string): { text: string; repairs: number } | null {
   try {
@@ -208,6 +219,12 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
   // `"key="value"` (unclosed key quote before `=`) — same heal as tier-1.
   let expectingKey = true
   let thisStringIsKey = false
+  // Orphan-sibling heal: index (in `out`) and char of the closer that popped
+  // the stack back into an object's member list — the only spot where a
+  // `, ` + `[`/`{` literal can be an orphan needing to merge back. -1 when
+  // no such closer is pending.
+  let valueCloserIndex = -1
+  let valueCloserChar = ''
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
     if (pendingEqualsColon && ch === '=') {
@@ -277,6 +294,15 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
       if (stack[stack.length - 1] === ch) {
         stack.pop()
         out += ch
+        // A closer that lands back inside an object's member list (the value
+        // was a member of an object) could have an orphan sibling right after
+        // the next comma — remember where its `out` char sits in case the
+        // merge below needs to delete it. Inner closers (top stays `]` or
+        // the container itself closed) are never merge points.
+        if (stack[stack.length - 1] === '}') {
+          valueCloserIndex = out.length - 1
+          valueCloserChar = ch
+        }
       } else {
         // Mismatched closer (e.g. a `]` mistyped as `}`, or a duplicated
         // terminator): no legal JSON can contain it here, so skip it and let
@@ -295,6 +321,33 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
       if (next === '}' || next === ']' || next === '') {
         repairs++
         continue
+      }
+      // Orphan sibling → merge it back into the value array closed just
+      // before this comma. Fires only when the comma sits in an object's
+      // member list (stack top `}`) directly after a just-closed value
+      // ARRAY (nothing but whitespace emitted since) and the next literal is
+      // `[`/`{` — a member list only accepts `"key":` pairs, so that
+      // literal can never be legal where it stands. Deleting the closer
+      // reopens the array so the orphan becomes its next element (an array
+      // accepts any value, so both orphan shapes parse). A value OBJECT
+      // closed early is deliberately left alone: deleting its `}` leaves
+      // the orphan's own `{...}` shell as a bare literal inside the object
+      // (`{"a":1,{"b":2}}`) — still invalid, and peeling the shell invents
+      // structure no deletion can justify. The whole-body parse below is the
+      // final arbiter.
+      if (next === '[' || next === '{') {
+        const mergeable =
+          stack[stack.length - 1] === '}' &&
+          valueCloserChar === ']' &&
+          valueCloserIndex >= 0 &&
+          out[valueCloserIndex] === valueCloserChar &&
+          out.slice(valueCloserIndex + 1).trim() === ''
+        if (mergeable) {
+          out = out.slice(0, valueCloserIndex) + out.slice(valueCloserIndex + 1)
+          stack.push(']')
+          valueCloserIndex = -1
+          repairs++
+        }
       }
       expectingKey = true
     } else if (ch === ':' && !inString) {
