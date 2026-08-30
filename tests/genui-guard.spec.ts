@@ -756,3 +756,82 @@ describe('repair/validate: code value→code alias', () => {
     expect(v.ok).toBe(true)
   })
 })
+
+describe('repairGenuiSpec: file-tree shares the 200-node budget', () => {
+  // file-tree entries are rendered DOM rows at every depth; repairTree must
+  // charge them against the SAME shared budget repairItems uses, else a huge
+  // tree bypasses the cap and renders tens of thousands of nodes (long-thread).
+  it('elides the tail after a huge file-tree exhausts the budget', () => {
+    const dirs = Array.from({ length: 50 }, (_, i) => ({
+      name: `dir${i}`, type: 'dir',
+      children: Array.from({ length: 10 }, (_, j) => ({ name: `f${i}-${j}.ts`, type: 'file' })),
+    }))
+    const spec = repairGenuiSpec({ items: [{ type: 'file-tree', items: dirs }, text('tail')] })
+    // Budget math: file-tree node costs 1, each dir 1, each file 1. The walk
+    // stops at exactly 200 entries and the trailing text is elided.
+    expect(spec?.items).toHaveLength(1)
+    const tree = spec!.items[0] as { items: Array<{ name: string; children?: unknown[] }> }
+    let entries = 0
+    const count = (nodes: Array<{ name: string; children?: unknown[] }>): void => {
+      for (const n of nodes) {
+        entries += 1
+        if (n.children !== undefined) count(n.children as Array<{ name: string; children?: unknown[] }>)
+      }
+    }
+    count(tree.items)
+    // 1 (file-tree node) + 199 entries = 200 exactly; the 50x10 input was 551.
+    expect(entries).toBe(GENUI_LIMITS.maxNodes - 1)
+  })
+
+  it('keeps a small file-tree and preserves trailing siblings', () => {
+    const spec = repairGenuiSpec({ items: [
+      { type: 'file-tree', items: [
+        { name: 'src', type: 'dir', children: [{ name: 'index.ts', type: 'file' }] },
+        { name: 'README.md', type: 'file' },
+      ] },
+      text('tail'),
+    ] })
+    expect(spec?.items).toHaveLength(2)
+    const tree = spec!.items[0] as { items: Array<{ name: string; type?: string }> }
+    expect(tree.items).toEqual([
+      { name: 'src', type: 'dir', children: [{ name: 'index.ts', type: 'file' }] },
+      { name: 'README.md', type: 'file' },
+    ])
+    expect((spec!.items[1] as { content: string }).content).toBe('tail')
+  })
+})
+
+describe('repairGenuiSpec: scene3d mesh colors are solid literals only', () => {
+  // THREE.Color never throws on unparseable strings — it warns and renders
+  // them as WHITE — so the guard must drop var(--dsw-*) mesh colors
+  // (browser-only tokens) to keep meshes on the visible palette. Background
+  // keeps `color()` (tokens allowed; unparseable ones degrade to white).
+  it('drops var(--dsw-*) mesh colors but keeps hex / rgb / hsl', () => {
+    const spec = repairGenuiSpec({
+      items: [
+        { type: 'scene3d', meshes: [
+          { shape: 'box', color: 'var(--dsw-static-deepseek-400)' },
+          { shape: 'sphere', color: '#ff8800' },
+          { shape: 'cone', color: 'rgb(10, 20, 30)' },
+          { shape: 'cylinder', color: 'hsl(210 50% 40%)' },
+        ], background: 'var(--dsw-static-deepseek-400)' },
+      ],
+    })
+    const scene = spec!.items[0] as { meshes: Array<{ color?: string }>; background?: string }
+    expect(scene.meshes[0]!.color).toBeUndefined()
+    expect(scene.meshes[1]!.color).toBe('#ff8800')
+    expect(scene.meshes[2]!.color).toBe('rgb(10, 20, 30)')
+    expect(scene.meshes[3]!.color).toBe('hsl(210 50% 40%)')
+    // background is still allowed to carry design tokens.
+    expect(scene.background).toBe('var(--dsw-static-deepseek-400)')
+  })
+
+  it('leaves mesh color absent when unset (renderer uses default)', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'scene3d', meshes: [{ shape: 'box' }] }],
+    })
+    const scene = spec!.items[0] as { meshes: Array<{ color?: string }> }
+    expect(scene.meshes[0]!.color).toBeUndefined()
+  })
+})
+

@@ -156,10 +156,11 @@ export function renderNode(
     }
     case 'stat': {
       const down = node.delta !== undefined && node.delta.startsWith('-')
+      const value = node.unit !== undefined ? `${node.value}${node.unit}` : node.value
       return (
         <div key={key} className={css.stat}>
           <span className={css.statLabel}>{node.label}</span>
-          <span className={css.statValue}>{node.value}</span>
+          <span className={css.statValue}>{value}</span>
           {node.delta !== undefined && <span className={`${css.statDelta} ${down ? css.down : css.up}`}>{node.delta}</span>}
         </div>
       )

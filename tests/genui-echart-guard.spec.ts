@@ -121,6 +121,79 @@ describe('sanitizeEChartOption: XSS prevention (via repairGenuiSpec)', () => {
     expect(node?.option?.backgroundColor).toBeUndefined()
   })
 
+  it('filters image:// symbol URLs (browser network channel)', () => {
+    // series[].symbol: 'image://…' makes ECharts fetch the URL — a
+    // prompt-injected model could use it to exfiltrate data or track users.
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { series: [{ type: 'bar', symbol: 'image://https://attacker.example/track.png' }] },
+    })] })
+    const node = spec?.items[0] as { option?: { series?: Array<{ symbol?: string }> } }
+    expect(node?.option?.series?.[0]?.symbol).toBeUndefined()
+  })
+
+  it('filters data:image graphic.style.image (direct byte load)', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { graphic: [{ type: 'image', style: { image: 'data:image/png;base64,iVBORw0KGgo=' } }] },
+    })] })
+    const node = spec?.items[0] as { option?: { graphic?: Array<{ style?: { image?: string } }> } }
+    expect(node?.option?.graphic?.[0]?.style?.image).toBeUndefined()
+  })
+
+  it('filters blob: URLs from tooltip formatter', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { tooltip: { formatter: 'blob:https://evil.example/uuid' } },
+    })] })
+    const node = spec?.items[0] as { option?: { tooltip?: { formatter?: string } } }
+    expect(node?.option?.tooltip?.formatter).toBeUndefined()
+  })
+
+  it('strips a bare https:// URL from graphic[].style.image', () => {
+    // ECharts fetches graphic[].style.image directly; ECHART_EXFIL_RE only
+    // matches image:/data:/blob: PREFIXES, so a bare https:// URL previously
+    // survived the string gate and became a tracking/exfil channel.
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { graphic: [{ type: 'image', style: { image: 'https://attacker.example/track.png' } }] },
+    })] })
+    const node = spec?.items[0] as { option?: { graphic?: Array<{ style?: { image?: string } }> } }
+    expect(node?.option?.graphic?.[0]?.style?.image).toBeUndefined()
+  })
+
+  it('strips a bare https:// URL from label.rich.*.backgroundColor.image', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { series: [{ type: 'bar', label: { rich: { i: { backgroundColor: { image: 'https://evil.example/badge.png' } } } } }] },
+    })] })
+    const node = spec?.items[0] as { option?: { series?: Array<{ label?: { rich?: Record<string, { backgroundColor?: { image?: string } }> } }> } }
+    expect(node?.option?.series?.[0]?.label?.rich?.i?.backgroundColor?.image).toBeUndefined()
+  })
+
+  it('keeps text labels that merely mention a URL', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: {
+        series: [{
+          type: 'bar',
+          label: {
+            text: '访问 https://example.com 查看',
+            rich: { i: { text: '见 https://docs.example.com/guide' } },
+          },
+        }],
+      },
+    })] })
+    const node = spec?.items[0] as { option?: { series?: Array<{ label?: { text?: string; rich?: Record<string, { text?: string }> } }> } }
+    expect(node?.option?.series?.[0]?.label?.text).toBe('访问 https://example.com 查看')
+    expect(node?.option?.series?.[0]?.label?.rich?.i?.text).toBe('见 https://docs.example.com/guide')
+  })
+
+  it('preserves legitimate empty objects (previously collapsed to undefined)', () => {
+    // An input `{}` (e.g. an empty style placeholder ECharts accepts) used
+    // to fold to undefined, silently deleting the key.
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { series: [{ type: 'bar', label: {} }], graphic: [{ type: 'rect', style: {} }] },
+    })] })
+    const node = spec?.items[0] as { option?: { series?: Array<{ label?: object }>; graphic?: Array<{ style?: object }> } }
+    expect(node?.option?.series?.[0]?.label).toEqual({})
+    expect(node?.option?.graphic?.[0]?.style).toEqual({})
+  })
+
   it('preserves legitimate string values (CJK, templates, hex)', () => {
     const spec = repairGenuiSpec({ items: [echart({
       option: {

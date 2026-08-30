@@ -121,6 +121,22 @@ function color(v: unknown): string | undefined {
 }
 
 /**
+ * Solid color field: hex/rgb/hsl ONLY — deliberately narrower than `color()`,
+ * which also admits host design tokens (`var(--dsw-*)`). CSS variables are
+ * fine for inline `style` strings (the browser resolves them), but THREE.Color
+ * cannot parse a `var()` literal and throws, taking the whole 3D scene down to
+ * the "3D 渲染失败" fallback. Mesh colors that are not solid literals degrade
+ * to the renderer's default palette.
+ */
+const SOLID_COLOR_RE = /^(?:#[\da-fA-F]{3,8}|rgba?\([^)]{0,64}\)|hsla?\([^)]{0,64}\))$/
+
+function solidColor(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined
+  const s = v.trim()
+  return s.length <= 64 && SOLID_COLOR_RE.test(s) ? s : undefined
+}
+
+/**
  * Link target field: only http(s) and mailto survive. `javascript:`/`data:`
  * and every other scheme degrade to a plain-text node — the model's link is
  * display, not an execution channel.
@@ -199,49 +215,158 @@ const ECHART_PRESETS = ['bar', 'line', 'area', 'pie', 'scatter'] as const
 
 /* ---------------- repair ---------------- */
 
+/**
+ * One repair diagnostic: WHY something the author wrote did not survive into
+ * the rendered tree. The repair is intentionally silent on the render path
+ * (streaming prefix-stability), but the same walk can COLLECT what it did so
+ * the tools (render_ui / validate_dsh_ui) and the client warning bar can show
+ * it — a silent drop the author cannot see is a bug factory (K3 audit #8).
+ */
+export interface GenuiRepairDiagnostic {
+  /** `renamed`: an alias key was consumed as its canonical name. */
+  kind: 'renamed' | 'dropped-unknown-key' | 'dropped-node'
+  /** Dotted path of the node in the spec tree, e.g. `items[2]`. */
+  path: string
+  /** One-line human-readable (model-facing) explanation. */
+  detail: string
+}
+
 interface RepairCtx {
   /** Nodes left in the budget; 0 stops the walk. */
   remaining: number
+  /** Optional diagnostic collector (K3 audit #8); absent = fully silent. */
+  diag?: GenuiRepairDiagnostic[]
+}
+
+/** Record an alias repair: `from` was consumed as its canonical `to`. */
+function renamed(ctx: RepairCtx, path: string, from: string, to: string): void {
+  ctx.diag?.push({ kind: 'renamed', path, detail: `${path} 的字段 '${from}' 已按正名 '${to}' 缝补——能用，但请改用正名 ${to}` })
+}
+
+/** Layout-container children with the children/columns aliases recorded
+ * (K3 audit #8) and the child path threaded for nested diagnostics. */
+function repairContainerItems(v: Record<string, unknown>, ctx: RepairCtx, depth: number, path: string): GenuiNode[] {
+  if (v.items === undefined) {
+    if (v.children !== undefined) renamed(ctx, path, 'children', 'items')
+    else if (v.columns !== undefined) renamed(ctx, path, 'columns', 'items')
+  }
+  return repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1, `${path}.items`)
+}
+
+/** Canonical + accepted-alias input keys per node type. The unknown-key diff
+ * uses this to report silently discarded fields; ALIASES ARE INCLUDED so a
+ * key consumed as an alias reports once as `renamed` and never double-reports
+ * as dropped. Keep in sync with the repairNode switch. */
+const NODE_KEYS: Record<string, ReadonlySet<string>> = {
+  text: new Set(['content', 'text', 'size', 'center']),
+  row: new Set(['items', 'children', 'columns', 'wrap', 'spacer']),
+  col: new Set(['items', 'children', 'columns', 'gap']),
+  grid: new Set(['items', 'children', 'columns', 'cols']),
+  card: new Set(['items', 'children', 'columns', 'title']),
+  button: new Set(['label', 'text', 'tone', 'full', 'small', 'icon', 'action']),
+  input: new Set(['label', 'placeholder', 'value', 'inputType', 'action', 'id']),
+  select: new Set(['options', 'choices', 'label', 'action', 'selected', 'id']),
+  checkbox: new Set(['label', 'checked', 'action']),
+  link: new Set(['label', 'href']),
+  audio: new Set(['src', 'url', 'alt', 'loop']),
+  video: new Set(['src', 'url', 'alt', 'poster', 'loop', 'muted', 'aspectRatio']),
+  badge: new Set(['label', 'text', 'value', 'tone', 'icon']),
+  stat: new Set(['label', 'value', 'val', 'delta', 'unit']),
+  progress: new Set(['value', 'percent', 'label', 'valueLabel']),
+  divider: new Set([]),
+  spacer: new Set([]),
+  avatar: new Set(['name', 'color']),
+  list: new Set(['items', 'children']),
+  table: new Set(['columns', 'headers', 'rows', 'data']),
+  chart: new Set(['data', 'points', 'series', 'kind']),
+  tabs: new Set(['tabs']),
+  plot: new Set(['series', 'xMin', 'xMax', 'yMin', 'yMax', 'title']),
+  callout: new Set(['content', 'text', 'body', 'description', 'tone', 'type_', 'level', 'title']),
+  steps: new Set(['steps', 'items', 'current']),
+  keyvalue: new Set(['pairs', 'items', 'data']),
+  diff: new Set(['diffs']),
+  json: new Set(['value', 'data']),
+  code: new Set(['code', 'value', 'lang']),
+  radio: new Set(['options', 'choices', 'label', 'selected', 'action', 'group', 'answer', 'explanation']),
+  submit: new Set(['label', 'action', 'resetAction', 'groups']),
+  switch: new Set(['label', 'checked', 'action']),
+  slider: new Set(['min', 'max', 'step', 'value', 'label', 'action', 'id']),
+  textarea: new Set(['label', 'placeholder', 'rows', 'value', 'action', 'id']),
+  accordion: new Set(['items']),
+  copy: new Set(['text', 'content', 'label']),
+  mermaid: new Set(['code', 'source']),
+  scene3d: new Set(['meshes', 'objects', 'title', 'ambient', 'background']),
+  diagram: new Set(['kind', 'nodes', 'edges', 'zones', 'variant', 'title', 'theme']),
+  timeline: new Set(['items', 'entries']),
+  'file-tree': new Set(['items']),
+  breadcrumb: new Set(['items']),
+  quiz: new Set(['question', 'options', 'choices', 'explanation', 'id', 'action']),
+  echart: new Set(['title', 'height', 'preset', 'data', 'series', 'option']),
 }
 
 /** Walk `list` with the shared node budget; drops invalid entries. */
-function repairItems(list: unknown, ctx: RepairCtx, depth: number): GenuiNode[] {
+function repairItems(list: unknown, ctx: RepairCtx, depth: number, path: string): GenuiNode[] {
   if (!Array.isArray(list)) return []
   const out: GenuiNode[] = []
-  for (const item of list) {
+  for (let i = 0; i < list.length; i++) {
     if (ctx.remaining <= 0) break
     ctx.remaining -= 1
-    const node = repairNode(item, ctx, depth)
+    const itemPath = `${path}[${i}]`
+    const declaredType = obj(list[i])?.type
+    const node = repairNode(list[i], ctx, depth, itemPath)
     if (node !== null) out.push(node)
+    else if (typeof declaredType === 'string' && NODE_KEYS[declaredType] !== undefined) {
+      // A DECLARED node failed repair (missing/invalid required fields): the
+      // whole node vanished — name it, so the drop is never silent.
+      ctx.diag?.push({ kind: 'dropped-node', path: itemPath, detail: `${itemPath}（type '${declaredType}'）因必填字段缺失或类型非法被整体丢弃` })
+    }
   }
   return out
 }
 
-function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | null {
+function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string): GenuiNode | null {
   if (depth > GENUI_LIMITS.maxDepth) return null
   const v = obj(value)
   if (v === undefined) return null
   const type = v.type
   if (typeof type !== 'string') return null
+  // Unknown-key diff against the per-type field table (K3 audit #8): repair
+  // rebuilds every node from whitelisted keys, so anything else silently
+  // vanishes — record it when a collector is attached. Types without a table
+  // (plugin-registered customs) pass through untouched and stay unexamined.
+  const allowed = NODE_KEYS[type]
+  if (allowed !== undefined) {
+    for (const key of Object.keys(v)) {
+      // 'type' is the discriminator itself, not a payload field: it is
+      // consumed by the switch below, never dropped — skip it so it does not
+      // false-positive as an unknown key.
+      if (key === 'type') continue
+      if (!allowed.has(key)) {
+        ctx.diag?.push({ kind: 'dropped-unknown-key', path, detail: `${path} 的字段 '${key}' 不是 ${type} 的合法字段，已被无声丢弃（键只取自字段表）` })
+      }
+    }
+  }
   switch (type) {
     case 'text': {
+      if (v.content === undefined && v.text !== undefined) renamed(ctx, path, 'text', 'content')
       const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
       if (content === undefined) return null
       return { type: 'text', content, ...opt('size', enu(v.size, TEXT_SIZES)), ...opt('center', v.center === true ? true : undefined) }
     }
     case 'row': {
-      return { type: 'row', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
+      return { type: 'row', items: repairContainerItems(v, ctx, depth, path), ...opt('wrap', v.wrap === true ? true : undefined), ...opt('spacer', v.spacer === true ? true : undefined) }
     }
     case 'col': {
-      return { type: 'col', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('gap', num(v.gap, 0, 96)) }
+      return { type: 'col', items: repairContainerItems(v, ctx, depth, path), ...opt('gap', num(v.gap, 0, 96)) }
     }
     case 'grid': {
-      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1) }
+      return { type: 'grid', cols: int(v.cols, 1, GENUI_LIMITS.maxGridCols) ?? 1, items: repairContainerItems(v, ctx, depth, path) }
     }
     case 'card': {
-      return { type: 'card', items: repairItems(v.items ?? v.children ?? v.columns, ctx, depth + 1), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
+      return { type: 'card', items: repairContainerItems(v, ctx, depth, path), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'button': {
+      if (v.label === undefined && v.text !== undefined) renamed(ctx, path, 'text', 'label')
       const label = str(v.label, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
       if (label === undefined) return null
       return {
@@ -265,6 +390,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'select': {
+      if (v.options === undefined && v.choices !== undefined) renamed(ctx, path, 'choices', 'options')
       const options = repairStrings(v.options ?? v.choices, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
       if (options === undefined) return null
       return {
@@ -286,6 +412,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'link', label, ...opt('href', safeHref(v.href)) }
     }
     case 'audio': {
+      if (v.src === undefined && v.url !== undefined) renamed(ctx, path, 'url', 'src')
       const src = safeMediaSrc(v.src ?? v.url)
       if (src === undefined) return null
       return {
@@ -295,6 +422,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'video': {
+      if (v.src === undefined && v.url !== undefined) renamed(ctx, path, 'url', 'src')
       const src = safeMediaSrc(v.src ?? v.url)
       if (src === undefined) return null
       return {
@@ -312,12 +440,17 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'badge', label, ...opt('tone', enu(v.tone, BADGE_TONES)), ...opt('icon', str(v.icon, 64)) }
     }
     case 'stat': {
+      if (v.value === undefined && v.val !== undefined) renamed(ctx, path, 'val', 'value')
       const label = str(v.label, GENUI_LIMITS.maxString)
       const value = str(v.value, 128) ?? str(v.val, 128)
       if (label === undefined || value === undefined) return null
-      return { type: 'stat', label, value, ...opt('delta', str(v.delta, 64)) }
+      // unit (K3 audit #9): optional suffix rendered appended to value
+      // (value '72' + unit '%' displays '72%') — the model may also bake
+      // the unit into the value string; both render identically.
+      return { type: 'stat', label, value, ...opt('delta', str(v.delta, 64)), ...opt('unit', str(v.unit, 32)) }
     }
     case 'progress': {
+      if (v.value === undefined && v.percent !== undefined) renamed(ctx, path, 'percent', 'value')
       const value = num(v.value ?? v.percent, 0, 100)
       if (value === undefined) return null
       return { type: 'progress', value, ...opt('label', str(v.label, GENUI_LIMITS.maxString)), ...opt('valueLabel', str(v.valueLabel, 64)) }
@@ -330,7 +463,8 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'avatar', name, ...opt('color', color(v.color)) }
     }
     case 'list': {
-      const items = repairListItems(v.items ?? v.children, GENUI_LIMITS.maxListItems, ctx, depth + 1)
+      if (v.items === undefined && v.children !== undefined) renamed(ctx, path, 'children', 'items')
+      const items = repairListItems(v.items ?? v.children, GENUI_LIMITS.maxListItems, ctx, depth + 1, `${path}.items`)
       if (items === undefined) return null
       return { type: 'list', items }
     }
@@ -338,6 +472,10 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       // `headers` is accepted as a `columns` alias — a common hand-written
       // spec mistake; the same tolerance as the `data`→`rows` alias below.
       const declaredCols = v.columns !== undefined ? v.columns : (v as Record<string, unknown>).headers
+      // Alias repairs are recorded (K3 audit #8): the model wrote `headers`
+      // / `data` — silently healed here, but it must not stay invisible.
+      if (v.columns === undefined && (v as Record<string, unknown>).headers !== undefined) renamed(ctx, path, 'headers', 'columns')
+      if (v.rows === undefined && (v as Record<string, unknown>).data !== undefined) renamed(ctx, path, 'data', 'rows')
       let rawCols = declaredCols as unknown
       let rawRows = v.rows !== undefined ? v.rows : (v as Record<string, unknown>).data
       // Self-heal model-shaped tables: antd-style object columns
@@ -360,6 +498,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'table', columns, rows }
     }
     case 'chart': {
+      if (v.data === undefined && v.points !== undefined) renamed(ctx, path, 'points', 'data')
       const data = repairChartData(v.data ?? v.points, GENUI_LIMITS.maxChartPoints)
       const series = Array.isArray(v.series) ? repairSeries(v.series, GENUI_LIMITS.maxPlotSeries, GENUI_LIMITS.maxChartPoints) : undefined
       // `data` is required by the type but grouped bars may ship `series`
@@ -369,7 +508,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'chart', data: data ?? [], ...opt('kind', enu(v.kind, CHART_KINDS)), ...opt('series', series) }
     }
     case 'tabs': {
-      const tabs = repairTabs(v.tabs, ctx, depth)
+      const tabs = repairTabs(v.tabs, ctx, depth, path)
       if (tabs === undefined) return null
       return { type: 'tabs', tabs }
     }
@@ -386,17 +525,31 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'callout': {
-      // `text`/`body`/`description` are accepted as `content` aliases.
+      // `text`/`body`/`description` are accepted as `content` aliases;
+      // `type_`/`level` as `tone` aliases — all recorded (K3 audit #8):
+      // the blacklist tells the model these forms are FORBIDDEN to emit.
+      if (v.content === undefined) {
+        if (v.text !== undefined) renamed(ctx, path, 'text', 'content')
+        else if (v.body !== undefined) renamed(ctx, path, 'body', 'content')
+        else if (v.description !== undefined) renamed(ctx, path, 'description', 'content')
+      }
+      if (v.tone === undefined && v.type_ !== undefined) renamed(ctx, path, 'type_', 'tone')
+      else if (v.tone === undefined && v.level !== undefined) renamed(ctx, path, 'level', 'tone')
       const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString)
       if (content === undefined) return null
       return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_ ?? v.level, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
     case 'steps': {
+      if (v.steps === undefined && v.items !== undefined) renamed(ctx, path, 'items', 'steps')
       const steps = repairSteps(v.steps ?? v.items)
       if (steps === undefined) return null
       return { type: 'steps', steps, ...opt('current', int(v.current, 0, steps.length)) }
     }
     case 'keyvalue': {
+      if (v.pairs === undefined) {
+        if (v.items !== undefined) renamed(ctx, path, 'items', 'pairs')
+        else if (v.data !== undefined) renamed(ctx, path, 'data', 'pairs')
+      }
       const pairs = repairPairs(v.pairs ?? v.items ?? v.data, GENUI_LIMITS.maxKeyValuePairs)
       if (pairs === undefined) return null
       return { type: 'keyvalue', pairs }
@@ -413,6 +566,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       // json had none). Oversized values DROP the whole node — truncation
       // would produce invalid JSON.
       if (!('value' in v) && !('data' in v)) return null
+      if (!('value' in v) && 'data' in v) renamed(ctx, path, 'data', 'value')
       const raw = v.value ?? v.data
       let serialized: string
       try {
@@ -424,12 +578,15 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'json', value: raw }
     }
     case 'code': {
-      // `value` is accepted as a `code` alias (hand-written spec mistake).
+      // `value` is accepted as a `code` alias (hand-written spec mistake),
+      // but it is blacklist #2 — record the stitch so it is never silent.
+      if (v.code === undefined && v.value !== undefined) renamed(ctx, path, 'value', 'code')
       const code = str(v.code, GENUI_LIMITS.maxCode) ?? str(v.value, GENUI_LIMITS.maxCode)
       if (code === undefined) return null
       return { type: 'code', code, ...opt('lang', str(v.lang, 64)) }
     }
     case 'radio': {
+      if (v.options === undefined && v.choices !== undefined) renamed(ctx, path, 'choices', 'options')
       const options = repairStrings(v.options ?? v.choices, GENUI_LIMITS.maxOptions, GENUI_LIMITS.maxString)
       if (options === undefined) return null
       return {
@@ -498,21 +655,24 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       }
     }
     case 'accordion': {
-      const items = repairAccordion(v.items, ctx, depth)
+      const items = repairAccordion(v.items, ctx, depth, path)
       if (items === undefined) return null
       return { type: 'accordion', items }
     }
     case 'copy': {
+      if (v.text === undefined && v.content !== undefined) renamed(ctx, path, 'content', 'text')
       const text = str(v.text, GENUI_LIMITS.maxCode) ?? str(v.content, GENUI_LIMITS.maxCode)
       if (text === undefined) return null
       return { type: 'copy', text, ...opt('label', str(v.label, 128)) }
     }
     case 'mermaid': {
+      if (v.code === undefined && v.source !== undefined) renamed(ctx, path, 'source', 'code')
       const code = str(v.code, GENUI_LIMITS.maxMermaid) ?? str(v.source, GENUI_LIMITS.maxMermaid)
       if (code === undefined) return null
       return { type: 'mermaid', code }
     }
     case 'scene3d': {
+      if (v.meshes === undefined && v.objects !== undefined) renamed(ctx, path, 'objects', 'meshes')
       const meshes = repairMeshes(v.meshes ?? v.objects)
       if (meshes === undefined) return null
       return { type: 'scene3d', meshes, ...opt('title', str(v.title, GENUI_LIMITS.maxString)), ...opt('ambient', num(v.ambient, 0, 2)), ...opt('background', color(v.background)) }
@@ -522,12 +682,16 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return repaired
     }
     case 'timeline': {
+      if (v.items === undefined && v.entries !== undefined) renamed(ctx, path, 'entries', 'items')
       const items = repairTimeline(v.items ?? v.entries, GENUI_LIMITS.maxTimelineItems)
       if (items === undefined) return null
       return { type: 'timeline', items }
     }
     case 'file-tree': {
-      const items = repairTree(v.items, GENUI_LIMITS.maxListItems)
+      // repairTree charges every entry (dir/file at any depth) against the
+      // shared node budget — without it a huge tree bypasses the 200-node cap
+      // and renders tens of thousands of DOM rows (long-thread).
+      const items = repairTree(v.items, GENUI_LIMITS.maxListItems, ctx)
       if (items === undefined) return null
       return { type: 'file-tree', items }
     }
@@ -537,6 +701,7 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number): GenuiNode | 
       return { type: 'breadcrumb', items }
     }
     case 'quiz': {
+      if (v.options === undefined && v.choices !== undefined) renamed(ctx, path, 'choices', 'options')
       const question = str(v.question, GENUI_LIMITS.maxString)
       const options = repairQuizOptions(v.options ?? v.choices)
       if (question === undefined || options === undefined) return null
@@ -613,10 +778,13 @@ function repairListItems(
   cap: number,
   ctx: RepairCtx,
   depth: number,
+  path: string,
 ): GenuiList['items'] | undefined {
   if (!Array.isArray(v)) return undefined
   const out: GenuiList['items'] = []
+  let i = 0
   for (const item of v) {
+    i += 1
     if (out.length >= cap) break
     if (typeof item === 'string') {
       out.push(item.slice(0, GENUI_LIMITS.maxString))
@@ -635,8 +803,9 @@ function repairListItems(
       // not nodes, so they never consume budget.
       if (ctx.remaining <= 0) break
       ctx.remaining -= 1
-      const node = repairNode(o, ctx, depth)
+      const node = repairNode(o, ctx, depth, `${path}[${i - 1}]`)
       if (node !== null) out.push(node)
+      else ctx.diag?.push({ kind: 'dropped-node', path: `${path}[${i - 1}]`, detail: `${path}[${i - 1}]（type '${o.type}'）因必填字段缺失或类型非法被整体丢弃` })
     }
   }
   return out
@@ -687,20 +856,22 @@ function repairSeries(v: unknown, cap: number, pointCap: number): Array<{ label:
   return out
 }
 
-function repairTabs(v: unknown, ctx: RepairCtx, depth: number): Array<{ label: string; items: GenuiNode[] }> | undefined {
+function repairTabs(v: unknown, ctx: RepairCtx, depth: number, path: string): Array<{ label: string; items: GenuiNode[] }> | undefined {
   if (!Array.isArray(v)) return undefined
   const out: Array<{ label: string; items: GenuiNode[] }> = []
-  for (const tab of v) {
+  for (let i = 0; i < v.length; i++) {
     if (out.length >= GENUI_LIMITS.maxTabs) break
-    const o = obj(tab)
+    const o = obj(v[i])
     const label = o === undefined ? undefined : str(o.label, 128)
     if (label === undefined || o === undefined) continue
     // `content` is accepted as an `items` alias (single component or array) —
     // models routinely emit tabs[].content and losing it empties every tab.
+    const tabPath = `${path}.tabs[${i}]`
+    if (o.items === undefined && o.content !== undefined) renamed(ctx, tabPath, 'content', 'items')
     const rawItems = o.items !== undefined ? o.items
       : o.content !== undefined ? (Array.isArray(o.content) ? o.content : [o.content])
       : undefined
-    out.push({ label, items: repairItems(rawItems, ctx, depth + 1) })
+    out.push({ label, items: repairItems(rawItems, ctx, depth + 1, `${tabPath}.items`) })
   }
   return out
 }
@@ -811,15 +982,15 @@ function repairDiffs(v: unknown): Array<{ path: string; oldText: string | null; 
   return out
 }
 
-function repairAccordion(v: unknown, ctx: RepairCtx, depth: number): Array<{ title: string; items: GenuiNode[] }> | undefined {
+function repairAccordion(v: unknown, ctx: RepairCtx, depth: number, path: string): Array<{ title: string; items: GenuiNode[] }> | undefined {
   if (!Array.isArray(v)) return undefined
   const out: Array<{ title: string; items: GenuiNode[] }> = []
-  for (const item of v) {
+  for (let i = 0; i < v.length; i++) {
     if (out.length >= GENUI_LIMITS.maxAccordionItems) break
-    const o = obj(item)
+    const o = obj(v[i])
     const title = o === undefined ? undefined : str(o.title, 256)
     if (title === undefined || o === undefined) continue
-    out.push({ title, items: repairItems(o.items, ctx, depth + 1) })
+    out.push({ title, items: repairItems(o.items, ctx, depth + 1, `${path}.items[${i}]`) })
   }
   return out
 }
@@ -836,7 +1007,12 @@ function repairMeshes(v: unknown): GenuiScene3D['meshes'] | undefined {
     const size = o === undefined ? undefined : num(o.size, -1e6, 1e6) ?? tuple3(o.size)
     out.push({
       shape,
-      ...opt('color', o === undefined ? undefined : color(o.color)),
+      // solidColor, not color(): a mesh color lands in THREE.Color, which
+      // never throws but silently renders unparseable strings (e.g.
+      // var(--dsw-*) — browser-only tokens) as WHITE — filter to solid
+      // literals here so a mesh degrades to the default palette instead of
+      // washing out (the renderer adds no validation of its own).
+      ...opt('color', o === undefined ? undefined : solidColor(o.color)),
       ...opt('position', o === undefined ? undefined : tuple3(o.position)),
       ...opt('rotation', o === undefined ? undefined : tuple3(o.rotation)),
       ...opt('scale', scale),
@@ -983,20 +1159,24 @@ function repairTimeline(v: unknown, cap: number): Array<{ title: string; desc?: 
   return out
 }
 
-function repairTree(v: unknown, cap: number): GenuiFileTreeNode[] | undefined {
+function repairTree(v: unknown, cap: number, ctx: RepairCtx): GenuiFileTreeNode[] | undefined {
   // Recursion is bounded by GENUI_LIMITS.maxTreeDepth (see the inner walk).
-  return walkTree(v, cap, GENUI_LIMITS.maxTreeDepth)
+  return walkTree(v, cap, GENUI_LIMITS.maxTreeDepth, ctx)
 }
 
-function walkTree(v: unknown, cap: number, depthLeft: number): GenuiFileTreeNode[] | undefined {
+function walkTree(v: unknown, cap: number, depthLeft: number, ctx: RepairCtx): GenuiFileTreeNode[] | undefined {
   if (!Array.isArray(v)) return undefined
   const out: GenuiFileTreeNode[] = []
   for (const item of v) {
+    // Every entry is a rendered DOM row at any depth: decrement the SHARED
+    // budget (same pool repairItems uses) and stop the walk once it is spent.
     if (out.length >= cap) break
+    if (ctx.remaining <= 0) break
+    ctx.remaining -= 1
     const o = obj(item)
     const name = o === undefined ? undefined : str(o.name, 256)
     if (name === undefined) continue
-    const children = o !== undefined && depthLeft > 0 && Array.isArray(o.children) ? walkTree(o.children, cap, depthLeft - 1) : undefined
+    const children = o !== undefined && depthLeft > 0 && Array.isArray(o.children) ? walkTree(o.children, cap, depthLeft - 1, ctx) : undefined
     out.push({ name, ...opt('type', o === undefined ? undefined : enu(o.type, FILE_TYPES)), ...opt('children', children) })
   }
   return out
@@ -1028,6 +1208,17 @@ function repairQuizOptions(v: unknown): Array<{ label: string; correct?: boolean
  * `javascript:` inside a chart option string.
  */
 const ECHART_HTML_DANGER_RE = /<(?:script|img|svg|iframe|video|audio|object|embed|source)\b|on[a-z]+\s*=|javascript:/i
+
+/**
+ * Prefixes that make ECharts hand a string to the browser as a network/data
+ * load: `series[].symbol: 'image://…'` (and graphic `style.image`) fetch an
+ * external URL, while `data:`/`blob:` URLs load bytes directly — each is an
+ * exfiltration/tracking channel for a prompt-injected model that the `url(` /
+ * HTML checks above never see. Only a string STARTING with the scheme is
+ * dangerous (ECharts prefix-parses these fields); labels, formatter
+ * templates, and hex colors are unaffected.
+ */
+const ECHART_EXFIL_RE = /^(?:image|data|blob):/i
 
 /**
  * Mutable budget counter for the sanitize walk — passed by reference so
@@ -1063,9 +1254,11 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
   if (typeof v === 'string') {
     const s = v.slice(0, GENUI_LIMITS.maxString)
     // Reject strings containing HTML/script injection patterns or CSS url()
-    // (exfiltration channel). Preserves legitimate ECharts string values
-    // (labels, plain-text formatter templates, etc.).
-    if (s.toLowerCase().includes('url(') || ECHART_HTML_DANGER_RE.test(s)) return undefined
+    // (exfiltration channel), plus image:/data:/blob: prefixes (ECharts turns
+    // those into browser network/data loads — see ECHART_EXFIL_RE). Preserves
+    // legitimate ECharts string values (labels, plain-text formatter
+    // templates, hex colors, etc.).
+    if (s.toLowerCase().includes('url(') || ECHART_HTML_DANGER_RE.test(s) || ECHART_EXFIL_RE.test(s.trim())) return undefined
     return s
   }
   if (typeof v === 'number' && Number.isFinite(v)) return v
@@ -1084,6 +1277,14 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
   if (o === undefined) return undefined
   const out: Record<string, unknown> = {}
   for (const [key, val] of Object.entries(o)) {
+    // `image` fields accept BARE absolute URLs: ECharts fetches
+    // graphic[].style.image and label.rich.*.backgroundColor.image directly,
+    // but the string gate above (ECHART_EXFIL_RE) only matches
+    // image:/data:/blob: PREFIXES, so a bare https:// URL slips through and
+    // becomes a tracking/exfil channel. Drop any `image` string carrying a
+    // scheme; text that merely MENTIONS a URL lives under other keys
+    // (label.text, formatter templates) and is unaffected.
+    if (key === 'image' && typeof val === 'string' && val.includes('://')) continue
     const s = sanitizeEChartOption(val, depth + 1, budget)
     if (s === undefined) continue
     // Force tooltip.renderMode: 'richText' to prevent ECharts from writing
@@ -1094,7 +1295,11 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
     }
     out[key] = s
   }
-  return Object.keys(out).length > 0 ? out : undefined
+  // Preserve legitimate empty objects: an input `{}` (e.g. an empty style
+  // placeholder ECharts accepts) used to collapse to undefined, silently
+  // deleting the key. Only fold non-empty objects whose every field was
+  // stripped by the walk above.
+  return Object.keys(out).length > 0 || Object.keys(o).length === 0 ? out : undefined
 }
 
 /**
@@ -1105,21 +1310,33 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
  * dropping/clamping/truncating. Idempotent: repairing a repaired spec is a
  * no-op.
  */
-export function repairGenuiSpec(value: unknown): GenuiSpec | null {
+export function repairGenuiSpec(value: unknown, diag?: GenuiRepairDiagnostic[]): GenuiSpec | null {
   const v = obj(value)
   if (v === undefined) return null
   if (!Array.isArray(v.items)) {
     const wrapped = wrapSingleComponentRoot(value)
     if (wrapped === null) return null
-    return repairGenuiSpec(wrapped)
+    return repairGenuiSpec(wrapped, diag)
   }
-  const ctx: RepairCtx = { remaining: GENUI_LIMITS.maxNodes }
+  // K3 audit #8: optional diagnostic collector — silent when absent (the
+  // streaming render path passes nothing), populated by the tools and the
+  // fence resolver so alias stitches and drops surface to model + user.
+  const ctx: RepairCtx = { remaining: GENUI_LIMITS.maxNodes, ...(diag !== undefined ? { diag } : {}) }
+  // Root-level unknown keys (everything but the four spec fields) also
+  // vanish silently — record them at the `spec` path.
+  if (diag !== undefined) {
+    for (const key of Object.keys(v)) {
+      if (key !== 'title' && key !== 'gap' && key !== 'panel' && key !== 'append' && key !== 'items') {
+        diag.push({ kind: 'dropped-unknown-key', path: 'spec', detail: `spec 根对象的字段 '${key}' 不是合法的 spec 字段（title/gap/panel/append/items），已被无声丢弃` })
+      }
+    }
+  }
   return {
     ...opt('title', str(v.title, GENUI_LIMITS.maxString)),
     ...opt('gap', num(v.gap, 0, 96)),
     ...opt('panel', v.panel === true ? true : undefined),
     ...opt('append', v.append === true ? true : undefined),
-    items: repairItems(v.items, ctx, 0),
+    items: repairItems(v.items, ctx, 0, 'items'),
   }
 }
 
@@ -1358,6 +1575,9 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (typeof v.label !== 'string') errors.push(`${at}: type 'stat' requires label (string)`)
       if (typeof v.value !== 'string' && typeof v.val !== 'string') errors.push(`${at}: type 'stat' requires value (string)`)
       isStr('delta')
+      // unit is an optional string suffix (K3 audit #9): type-check it so a
+      // non-string unit surfaces as a validation error, not a silent drop.
+      isStr('unit')
       break
     case 'progress':
       const progVal = v.value ?? v.percent

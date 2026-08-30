@@ -118,4 +118,26 @@ describe('scene3d event-driven rendering', () => {
     dispose()
     expect(container.querySelector('canvas')).toBeNull()
   })
+
+  it('renders once even with unparseable color strings', async () => {
+    // THREE.Color never throws on bad input — it warns and yields white — so
+    // the render path must not depend on a catch (removed as dead code).
+    // Mesh colors are filtered upstream by the guard (solidColor); this
+    // drives mountScene directly (guard bypassed) to pin the no-crash
+    // contract at the render layer.
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const badColors: GenuiScene3D = {
+      title: '异常颜色',
+      background: 'var(--dsw-not-a-real-token)',
+      meshes: [
+        { shape: 'box', color: 'definitely-not-a-color' },
+        { shape: 'sphere' }, // color absent → default palette
+      ],
+    }
+    const dispose = await mountScene(container, badColors)
+    expect(renderSpy).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('canvas')).not.toBeNull()
+    dispose()
+  })
 })

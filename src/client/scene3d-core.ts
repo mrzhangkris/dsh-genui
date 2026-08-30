@@ -75,7 +75,11 @@ export async function mountScene(container: HTMLElement, scene: GenuiScene3D): P
 
   const threeScene = new THREE.Scene()
   if (scene.background !== undefined) {
-    try { threeScene.background = new THREE.Color(scene.background) } catch { /* keep transparent */ }
+    // No try/catch: THREE.Color never throws on unparseable strings — it
+    // console.warns and yields its white default — so the catch was dead
+    // code. Validation lives in the guard layer (color() here, solidColor
+    // for mesh colors); an unparseable token degrades to white below.
+    threeScene.background = new THREE.Color(scene.background)
   }
 
   const ambient = new THREE.AmbientLight(0xffffff, scene.ambient ?? 0.8)
@@ -93,6 +97,10 @@ export async function mountScene(container: HTMLElement, scene: GenuiScene3D): P
 
   for (const mesh of scene.meshes) {
     const geo = geometryFor(THREE, mesh.shape, mesh.size)
+    // No try/catch: THREE.Color does not throw on unparseable strings — it
+    // console.warns and yields its white default — so the catch was dead
+    // code. The guard layer is the real defense (repairMeshes passes mesh
+    // colors through solidColor only); absence falls back to the palette.
     const color = new THREE.Color(mesh.color ?? '#6ea8ff')
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.15 })
     const obj = new THREE.Mesh(geo, mat)

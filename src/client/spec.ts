@@ -184,6 +184,8 @@ export interface GenuiStat {
   label: string
   value: string
   delta?: string
+  /** Optional unit suffix rendered inline after the value (e.g. '%'). */
+  unit?: string
 }
 
 export interface GenuiProgress {
