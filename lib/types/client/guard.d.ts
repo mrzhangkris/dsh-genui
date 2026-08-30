@@ -88,6 +88,21 @@ export interface GenuiValidation {
     errors: string[];
 }
 /**
+ * One repair diagnostic: WHY something the author wrote did not survive into
+ * the rendered tree. The repair is intentionally silent on the render path
+ * (streaming prefix-stability), but the same walk can COLLECT what it did so
+ * the tools (render_ui / validate_dsh_ui) and the client warning bar can show
+ * it — a silent drop the author cannot see is a bug factory (K3 audit #8).
+ */
+export interface GenuiRepairDiagnostic {
+    /** `renamed`: an alias key was consumed as its canonical name. */
+    kind: 'renamed' | 'dropped-unknown-key' | 'dropped-node';
+    /** Dotted path of the node in the spec tree, e.g. `items[2]`. */
+    path: string;
+    /** One-line human-readable (model-facing) explanation. */
+    detail: string;
+}
+/**
  * Deterministically repair a raw spec value into a renderable GenuiSpec.
  * Returns null only when the root is not an object with an `items` array
  * (a bare component root is wrapped into a col first — the documented fence
@@ -95,7 +110,7 @@ export interface GenuiValidation {
  * dropping/clamping/truncating. Idempotent: repairing a repaired spec is a
  * no-op.
  */
-export declare function repairGenuiSpec(value: unknown): GenuiSpec | null;
+export declare function repairGenuiSpec(value: unknown, diag?: GenuiRepairDiagnostic[]): GenuiSpec | null;
 /**
  * Count the nodes of a spec tree (every item, descending into tabs /
  * accordion / file-tree / list containers — the same descent
