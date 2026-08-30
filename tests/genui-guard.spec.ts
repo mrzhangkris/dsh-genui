@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { GENUI_LIMITS, GENUI_NODE_TYPES, countDeclaredGenuiNodes, countGenuiNodes, repairGenuiSpec, validateGenuiSpec } from '../src/client/guard.ts'
+import { GENUI_LIMITS, GENUI_NODE_TYPES, countDeclaredGenuiNodes, countGenuiNodes, repairGenuiSpec, validateGenuiSpec, type GenuiRepairDiagnostic } from '../src/client/guard.ts'
 import { type GenuiNode, type GenuiList, isGenuiSpec, parseGenuiSpec } from '../src/client/spec.ts'
 
 const text = (content: string) => ({ type: 'text', content })
@@ -799,6 +799,24 @@ describe('repairGenuiSpec: file-tree shares the 200-node budget', () => {
     ])
     expect((spec!.items[1] as { content: string }).content).toBe('tail')
   })
+
+  it('nameless junk entries do not consume the shared budget', () => {
+    // walkTree charges only KEPT entries: a nameless entry is dropped BEFORE
+    // the budget decrement, so junk never starves valid entries or trailing
+    // siblings. (Previously the charge preceded the name check, so a wall of
+    // junk drained the pool first.)
+    const junk = Array.from({ length: GENUI_LIMITS.maxNodes }, () => ({ type: 'file' }))
+    const dirs = Array.from({ length: 10 }, (_, i) => ({ name: `d${i}`, type: 'dir' }))
+    const spec = repairGenuiSpec({ items: [
+      { type: 'file-tree', items: [...junk, ...dirs] },
+      text('tail'),
+    ] })
+    // Old behavior: 200 junk entries exhausted the whole pool before the
+    // first named dir — the tree came back empty and the tail was elided.
+    const tree = spec!.items[0] as { items: Array<{ name: string }> }
+    expect(tree.items).toHaveLength(10)
+    expect((spec!.items[1] as { content: string }).content).toBe('tail')
+  })
 })
 
 describe('repairGenuiSpec: scene3d mesh colors are solid literals only', () => {
@@ -832,6 +850,77 @@ describe('repairGenuiSpec: scene3d mesh colors are solid literals only', () => {
     })
     const scene = spec!.items[0] as { meshes: Array<{ color?: string }> }
     expect(scene.meshes[0]!.color).toBeUndefined()
+  })
+
+  it('admits whitelisted CSS named colors (THREE.Color.NAMES), normalized to lowercase', () => {
+    // THREE.Color.NAMES resolves CSS named colors like 'red'/'navy' — the
+    // old hex/rgb/hsl-only gate rejected them and washed meshes to the
+    // default palette. Whitelisted names pass (lowercase = the exact form
+    // NAMES stores), including the 'grey' spelling variant.
+    const spec = repairGenuiSpec({
+      items: [{ type: 'scene3d', meshes: [
+        { shape: 'box', color: 'red' },
+        { shape: 'sphere', color: 'NAVY' },
+        { shape: 'cone', color: 'grey' },
+        { shape: 'cylinder', color: 'gold' },
+      ] }],
+    })
+    const scene = spec!.items[0] as { meshes: Array<{ color?: string }> }
+    expect(scene.meshes.map((m) => m.color)).toEqual(['red', 'navy', 'grey', 'gold'])
+  })
+
+  it('still rejects named colors outside the whitelist', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'scene3d', meshes: [
+        { shape: 'box', color: 'rebeccapurple' },      // real CSS name, not whitelisted
+        { shape: 'sphere', color: 'transparent' },     // CSS keyword, not a color literal
+        { shape: 'cone', color: 'color(srgb 1 0 0)' }, // not in the accepted grammar
+        { shape: 'cylinder', color: 'var(--dsw-accent)' }, // tokens stay rejected
+      ] }],
+    })
+    const scene = spec!.items[0] as { meshes: Array<{ color?: string }> }
+    expect(scene.meshes.map((m) => m.color)).toEqual([undefined, undefined, undefined, undefined])
+  })
+})
+
+describe('repairGenuiSpec: scene3d nodes capped per spec', () => {
+  // Browsers cap live WebGL contexts (~16) and a page that crosses it loses
+  // EVERY context at once (collective context loss) — so the guard enforces
+  // a total per-spec scene3d budget, nesting included.
+  const scene = () => ({ type: 'scene3d', meshes: [{ shape: 'box', size: [1, 1, 1] }] })
+
+  it('keeps at most maxScene3dNodes top-level scenes and drops the rest', () => {
+    const spec = repairGenuiSpec({ items: Array.from({ length: GENUI_LIMITS.maxScene3dNodes + 3 }, scene) })
+    expect(spec?.items).toHaveLength(GENUI_LIMITS.maxScene3dNodes)
+    expect(spec!.items.every((n) => (n as { type: string }).type === 'scene3d')).toBe(true)
+  })
+
+  it('counts nested scenes against the same cap and reports the drop', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    const spec = repairGenuiSpec({ items: [
+      { type: 'col', items: [scene(), scene()] },
+      { type: 'card', items: [scene()] },
+      scene(), scene(),   // 4th and 5th scenes
+      scene(),            // 6th — over the cap, dropped (items[4])
+    ] }, diag)
+    expect(spec?.items).toHaveLength(4) // col, card, scene ×2 (5 scenes kept in total)
+    const col = spec!.items[0] as { items: unknown[] }
+    const card = spec!.items[1] as { items: unknown[] }
+    expect(col.items).toHaveLength(2)
+    expect(card.items).toHaveLength(1)
+    const dropped = diag.filter((d) => d.kind === 'dropped-node')
+    expect(dropped).toHaveLength(1)
+    expect(dropped[0]!.path).toBe('items[4]')
+    expect(dropped[0]!.detail).toContain("'scene3d'")
+  })
+
+  it('a scene that fails mesh repair does not burn a cap slot', () => {
+    const spec = repairGenuiSpec({ items: [
+      { type: 'scene3d' },                 // no meshes → dropped, slot kept
+      { type: 'scene3d', meshes: 'nope' }, // non-array meshes → dropped
+      scene(), scene(), scene(), scene(), scene(), // all five still fit
+    ] })
+    expect(spec?.items).toHaveLength(GENUI_LIMITS.maxScene3dNodes)
   })
 })
 

@@ -166,6 +166,41 @@ describe('sanitizeEChartOption: XSS prevention (via repairGenuiSpec)', () => {
     expect(node?.option?.series?.[0]?.label?.rich?.i?.backgroundColor?.image).toBeUndefined()
   })
 
+  it('strips a protocol-relative // URL from graphic[].style.image', () => {
+    // The browser resolves '//host/x' against the page's own scheme, so a
+    // protocol-relative URL is fetched exactly like 'https://host/x' — the
+    // previous scheme-only check (val.includes('://')) let it slip through.
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { graphic: [
+        { type: 'image', style: { image: '//evil.example/x.png' } },
+        { type: 'image', style: { image: '  //evil.example/padded.png' } },
+      ] },
+    })] })
+    const node = spec?.items[0] as { option?: { graphic?: Array<{ style?: { image?: string } }> } }
+    expect(node?.option?.graphic?.[0]?.style?.image).toBeUndefined()
+    expect(node?.option?.graphic?.[1]?.style?.image).toBeUndefined()
+  })
+
+  it('strips a protocol-relative // URL from label.rich.*.backgroundColor.image', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { series: [{ type: 'bar', label: { rich: { i: { backgroundColor: { image: '//evil.example/badge.png' } } } } }] },
+    })] })
+    const node = spec?.items[0] as { option?: { series?: Array<{ label?: { rich?: Record<string, { backgroundColor?: { image?: string } }> } }> } }
+    expect(node?.option?.series?.[0]?.label?.rich?.i?.backgroundColor?.image).toBeUndefined()
+  })
+
+  it('keeps same-origin relative paths and // mentions in non-image keys', () => {
+    const spec = repairGenuiSpec({ items: [echart({
+      option: {
+        graphic: [{ type: 'image', style: { image: 'img/local.png' } }],
+        title: { text: '路径以 // 开头才是协议相对' },
+      },
+    })] })
+    const node = spec?.items[0] as { option?: { graphic?: Array<{ style?: { image?: string } }>; title?: { text?: string } } }
+    expect(node?.option?.graphic?.[0]?.style?.image).toBe('img/local.png')
+    expect(node?.option?.title?.text).toBe('路径以 // 开头才是协议相对')
+  })
+
   it('keeps text labels that merely mention a URL', () => {
     const spec = repairGenuiSpec({ items: [echart({
       option: {

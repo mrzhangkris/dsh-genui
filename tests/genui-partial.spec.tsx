@@ -4,7 +4,7 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { parsePartialGenuiSpec, collectPartialCandidates, setMaxPartialRepairAttempts } from '../src/client/parse-partial.ts'
+import { parsePartialGenuiSpec, collectPartialCandidates } from '../src/client/parse-partial.ts'
 
 afterEach(cleanup)
 
@@ -97,10 +97,6 @@ describe('partial render while streaming', () => {
 })
 
 describe('bounded repair (single scan, capped attempts)', () => {
-  afterEach(() => {
-    setMaxPartialRepairAttempts(32)
-  })
-
   it('scans the pathological 24 KB / 8000-object input once, ≤32 candidates', () => {
     const items = Array.from({ length: 8000 }, (_, i) => `{"type":"text","content":"c${i}"}`).join(',')
     const raw = `{"items":[${items}`
@@ -121,10 +117,9 @@ describe('bounded repair (single scan, capped attempts)', () => {
   })
 
   it('respects an injected smaller repair budget', () => {
-    setMaxPartialRepairAttempts(4)
     const raw = '{"items":[' + Array.from({ length: 8000 }, (_, i) => `{"type":"text","content":"c${i}"}`).join(',') + ',"type":"bu'
     const parseSpy = vi.spyOn(JSON, 'parse')
-    parsePartialGenuiSpec(raw)
+    parsePartialGenuiSpec(raw, 4)
     expect(parseSpy.mock.calls.length).toBeLessThanOrEqual(5) // 1 full + 4 repair attempts
     parseSpy.mockRestore()
   })

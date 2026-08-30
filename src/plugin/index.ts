@@ -74,7 +74,9 @@ async function serveGenuiAsset(req: IncomingMessage, res: ServerResponse): Promi
     const body = await readFile(join(dir, file))
     res.writeHead(200, {
       'content-type': 'text/javascript; charset=utf-8',
-      'cache-control': 'no-cache',
+      // Asset URLs carry the bundle rev query (?rev=…), so a rebuild busts
+      // the cache — safe to cache for a year and never revalidate.
+      'cache-control': 'public, max-age=31536000, immutable',
     })
     res.end(body)
   } catch {

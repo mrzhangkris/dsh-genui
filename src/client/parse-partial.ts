@@ -27,15 +27,10 @@ import { GENUI_LIMITS } from './guard.ts'
 import { isGenuiSpec, type GenuiSpec } from './spec.ts'
 import { wrapSingleComponentRoot } from './spec.ts'
 
-/** Default repair-candidate budget (adjustable; see the design doc). */
+/** Default repair-candidate budget. Callers may pass a smaller per-call
+ * budget (tests / tuning); the default is the protection ceiling for
+ * depth 8 / 200 nodes. */
 export const MAX_PARTIAL_REPAIR_ATTEMPTS = 32
-
-let repairAttemptsLimit = MAX_PARTIAL_REPAIR_ATTEMPTS
-
-/** Override the repair-candidate budget (tests / tuning). */
-export function setMaxPartialRepairAttempts(n: number): void {
-  repairAttemptsLimit = n
-}
 
 /** One repair candidate: a balanced prefix of the body ending at `end`,
  *  plus the closing brackets to append (empty when already balanced). */
@@ -58,12 +53,17 @@ export interface PartialCandidate {
  *
  * Exposed for tests (the `scannedChars` diagnostic); not exported from the
  * package entry. The parser calls this exactly once per parse.
+ * @param attemptsLimit - candidate ring-buffer cap (defaults to
+ *   `MAX_PARTIAL_REPAIR_ATTEMPTS`; tests inject a smaller budget).
  */
-export function collectPartialCandidates(raw: string): { candidates: PartialCandidate[]; scannedChars: number } {
+export function collectPartialCandidates(
+  raw: string,
+  attemptsLimit: number = MAX_PARTIAL_REPAIR_ATTEMPTS,
+): { candidates: PartialCandidate[]; scannedChars: number } {
   const stack: string[] = []
   const candidates: PartialCandidate[] = []
   const push = (c: PartialCandidate): void => {
-    if (candidates.length >= repairAttemptsLimit) candidates.shift()
+    if (candidates.length >= attemptsLimit) candidates.shift()
     candidates.push(c)
   }
   let inString = false
@@ -111,7 +111,7 @@ export function collectPartialCandidates(raw: string): { candidates: PartialCand
   for (const c of candidates) {
     if (deduped.length === 0 || deduped[deduped.length - 1]!.end !== c.end) deduped.push(c)
   }
-  return { candidates: deduped.slice(0, repairAttemptsLimit), scannedChars: scanned }
+  return { candidates: deduped.slice(0, attemptsLimit), scannedChars: scanned }
 }
 
 /** Closing brackets for the remaining open stack (top first). */
@@ -138,10 +138,13 @@ function trySpec(candidate: string): GenuiSpec | null {
 /**
  * Parse a possibly incomplete genui spec body.
  * @param raw - the fence body as accumulated so far.
+ * @param maxRepairAttempts - repair-candidate budget (defaults to
+ *   `MAX_PARTIAL_REPAIR_ATTEMPTS`; tests inject a smaller budget instead of
+ *   mutating a module-level variable).
  * @returns a spec containing only finished components, or null when nothing
  *   usable has been written yet.
  */
-export function parsePartialGenuiSpec(raw: string): GenuiSpec | null {
+export function parsePartialGenuiSpec(raw: string, maxRepairAttempts: number = MAX_PARTIAL_REPAIR_ATTEMPTS): GenuiSpec | null {
   const text = raw.trim()
   if (text === '') return null
 
@@ -149,9 +152,9 @@ export function parsePartialGenuiSpec(raw: string): GenuiSpec | null {
   const full = trySpec(text)
   if (full !== null) return full
 
-  // 2. Bounded repair: ONE forward scan, at most `repairAttemptsLimit`
+  // 2. Bounded repair: ONE forward scan, at most `maxRepairAttempts`
   //    candidates, longest first — never a re-scan per `}`.
-  const { candidates } = collectPartialCandidates(text)
+  const { candidates } = collectPartialCandidates(text, maxRepairAttempts)
   for (const candidate of candidates) {
     const spec = trySpec(text.slice(0, candidate.end) + candidate.closingSuffix)
     if (spec !== null) return spec

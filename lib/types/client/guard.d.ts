@@ -51,8 +51,12 @@ export declare const GENUI_LIMITS: {
     /** Maximum `plot` series and per-series parameters. */
     readonly maxPlotSeries: 8;
     readonly maxPlotParams: 6;
-    /** Maximum `scene3d` meshes. */
+    /** Maximum `scene3d` meshes per scene. */
     readonly maxMeshes: 5;
+    /** Maximum `scene3d` nodes per spec (nesting included). Browsers cap live
+     * WebGL contexts (~16) and a page stuffed with scenes loses every context
+     * at once (collective context loss), so scenes past the cap are dropped. */
+    readonly maxScene3dNodes: 5;
     /** Maximum `quiz` options. */
     readonly maxQuizOptions: 8;
     /** Maximum `steps` / `timeline` / `breadcrumb` / `keyvalue` entries. */

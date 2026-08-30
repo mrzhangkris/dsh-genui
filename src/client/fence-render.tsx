@@ -179,24 +179,39 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
   return { spec, warnings }
 }
 
-/** Single-entry fingerprint memo: renderInlineFence stringifies the spec for
- * the durable-state key on EVERY call, and GenuiBlock's memo comparator
- * stringifies both prop specs again — during streaming that tripled the
- * serialization of a growing tree. Specs are immutable between renders, so
- * identity is a sound cache key. */
-let fingerprintSpec: GenuiSpec | null = null
-let fingerprintCache = ''
-function specFingerprint(spec: GenuiSpec): string {
-  if (spec !== fingerprintSpec) {
-    fingerprintSpec = spec
-    fingerprintCache = JSON.stringify(spec)
+/** The durable-state GenuiBlock for one inline fence: stateKey = session +
+ * stable source + content fingerprint (v2.7 — replaying the same content
+ * restores answers/lock/field values; new content (换题, edited spec) gets a
+ * fresh key; without a stable source, streaming / non-conversation surfaces
+ * do not persist state).
+ *
+ * The content fingerprint is memoized in a PER-MOUNT ref, not a module-level
+ * variable (audit #9: no cross-session mutable global) — each fence instance
+ * caches the JSON of the last spec it saw, exactly the granularity the old
+ * single-entry module cache served. The memo exists because
+ * renderInlineFence stringifies the spec on every call and GenuiBlock's memo
+ * comparator stringifies both prop specs again — during streaming that
+ * tripled the serialization of a growing tree. Specs are immutable between
+ * renders, so identity is a sound cache key. */
+function FingerprintedGenuiBlock({ sessionId, sourceKey, spec, warnings }: {
+  sessionId: string | undefined
+  sourceKey: string
+  spec: GenuiSpec
+  warnings: string[]
+}): ReactNode {
+  const memo = useRef<{ readonly spec: GenuiSpec; readonly fingerprint: string } | null>(null)
+  let stateKey: string | undefined
+  if (sessionId !== undefined) {
+    if (memo.current === null || memo.current.spec !== spec) {
+      memo.current = { spec, fingerprint: JSON.stringify(spec) }
+    }
+    stateKey = fenceStateKey(sessionId, sourceKey, memo.current.fingerprint)
   }
-  return fingerprintCache
+  return <GenuiBlock spec={spec} warnings={warnings} stateKey={stateKey} />
 }
 
 /** The inline GenuiBlock tree for a resolved non-panel spec. */
 function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spec: GenuiSpec, warnings: string[] = []): ReactNode {
-  const sessionId = context?.sessionId
   return (
     // React key carries the stable source identity when present (atomic
     // remount at streaming→settled), falling back to the document key.
@@ -204,17 +219,11 @@ function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spe
     // amber bar (the block still renders) — previously they rendered
     // SILENTLY with no clue the spec was not what the author wrote.
     <ErrorBoundary key={context?.source?.id ?? key} label="该界面">
-      <GenuiBlock
+      <FingerprintedGenuiBlock
+        sessionId={context?.sessionId}
+        sourceKey={context?.source?.id ?? String(key)}
         spec={spec}
         warnings={warnings}
-        // v2.7 durable state: session + stable source + content fingerprint —
-        // replaying the same content restores answers/lock/field values; new
-        // content (换题, edited spec) gets a fresh key. Without a stable
-        // source (streaming / non-conversation surfaces) state is not
-        // persisted.
-        stateKey={sessionId === undefined
-          ? undefined
-          : fenceStateKey(sessionId, context?.source?.id ?? String(key), specFingerprint(spec))}
       />
     </ErrorBoundary>
   )

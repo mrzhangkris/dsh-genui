@@ -53,8 +53,12 @@ export const GENUI_LIMITS = {
   /** Maximum `plot` series and per-series parameters. */
   maxPlotSeries: 8,
   maxPlotParams: 6,
-  /** Maximum `scene3d` meshes. */
+  /** Maximum `scene3d` meshes per scene. */
   maxMeshes: 5,
+  /** Maximum `scene3d` nodes per spec (nesting included). Browsers cap live
+   * WebGL contexts (~16) and a page stuffed with scenes loses every context
+   * at once (collective context loss), so scenes past the cap are dropped. */
+  maxScene3dNodes: 5,
   /** Maximum `quiz` options. */
   maxQuizOptions: 8,
   /** Maximum `steps` / `timeline` / `breadcrumb` / `keyvalue` entries. */
@@ -121,19 +125,33 @@ function color(v: unknown): string | undefined {
 }
 
 /**
- * Solid color field: hex/rgb/hsl ONLY — deliberately narrower than `color()`,
- * which also admits host design tokens (`var(--dsw-*)`). CSS variables are
- * fine for inline `style` strings (the browser resolves them), but THREE.Color
- * cannot parse a `var()` literal and throws, taking the whole 3D scene down to
- * the "3D 渲染失败" fallback. Mesh colors that are not solid literals degrade
- * to the renderer's default palette.
+ * Solid color field: hex/rgb/hsl plus a whitelist of common CSS named
+ * colors — deliberately narrower than `color()`, which also admits host
+ * design tokens (`var(--dsw-*)`). CSS variables are fine for inline
+ * `style` strings (the browser resolves them), but THREE.Color cannot
+ * parse a `var()` literal and throws, taking the whole 3D scene down to
+ * the "3D 渲染失败" fallback. THREE.Color.NAMES does resolve CSS named
+ * colors (`red`, `navy`, …), so the common ones pass (normalized to
+ * lowercase, the exact form NAMES stores); anything outside the whitelist
+ * degrades to the renderer's default palette.
  */
 const SOLID_COLOR_RE = /^(?:#[\da-fA-F]{3,8}|rgba?\([^)]{0,64}\)|hsla?\([^)]{0,64}\))$/
+
+/** Common CSS named colors THREE.Color.NAMES resolves. Deliberately NOT the
+ * full CSS list — a closed, reviewed set; extend only with colors verified
+ * against the renderer's three.js build. Matched case-insensitively. */
+const SOLID_NAMED_COLORS = new Set([
+  'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'brown',
+  'black', 'white', 'gray', 'grey', 'cyan', 'magenta', 'lime', 'teal',
+  'navy', 'olive', 'maroon', 'silver', 'gold',
+])
 
 function solidColor(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined
   const s = v.trim()
-  return s.length <= 64 && SOLID_COLOR_RE.test(s) ? s : undefined
+  if (s.length > 64) return undefined
+  if (SOLID_NAMED_COLORS.has(s.toLowerCase())) return s.toLowerCase()
+  return SOLID_COLOR_RE.test(s) ? s : undefined
 }
 
 /**
@@ -234,6 +252,9 @@ export interface GenuiRepairDiagnostic {
 interface RepairCtx {
   /** Nodes left in the budget; 0 stops the walk. */
   remaining: number
+  /** `scene3d` nodes left for this spec (WebGL context cap — see
+   * GENUI_LIMITS.maxScene3dNodes); 0 drops any further scene. */
+  scene3dLeft: number
   /** Optional diagnostic collector (K3 audit #8); absent = fully silent. */
   diag?: GenuiRepairDiagnostic[]
 }
@@ -672,9 +693,16 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
       return { type: 'mermaid', code }
     }
     case 'scene3d': {
+      // Shared per-spec cap (maxScene3dLeft): browsers allow ~16 live WebGL
+      // contexts and cross it and the page loses EVERY context, so scenes
+      // past the cap are dropped — repairItems reports the drop. The budget
+      // is spent only on scenes that survive mesh repair, so an invalid
+      // scene never burns a slot.
+      if (ctx.scene3dLeft <= 0) return null
       if (v.meshes === undefined && v.objects !== undefined) renamed(ctx, path, 'objects', 'meshes')
       const meshes = repairMeshes(v.meshes ?? v.objects)
       if (meshes === undefined) return null
+      ctx.scene3dLeft -= 1
       return { type: 'scene3d', meshes, ...opt('title', str(v.title, GENUI_LIMITS.maxString)), ...opt('ambient', num(v.ambient, 0, 2)), ...opt('background', color(v.background)) }
     }
     case 'diagram': {
@@ -1168,16 +1196,21 @@ function walkTree(v: unknown, cap: number, depthLeft: number, ctx: RepairCtx): G
   if (!Array.isArray(v)) return undefined
   const out: GenuiFileTreeNode[] = []
   for (const item of v) {
-    // Every entry is a rendered DOM row at any depth: decrement the SHARED
-    // budget (same pool repairItems uses) and stop the walk once it is spent.
+    // Every KEPT entry is a rendered DOM row at any depth: decrement the
+    // SHARED budget (same pool repairItems uses) and stop the walk once it
+    // is spent. A nameless junk entry is dropped BEFORE the charge — it
+    // never renders, so it must not consume the valid-entry quota (the
+    // decrement moved below the name check; walkTree still shares the one
+    // ctx pool repairItems spends, so budget math stays consistent).
     if (out.length >= cap) break
     if (ctx.remaining <= 0) break
-    ctx.remaining -= 1
     const o = obj(item)
-    const name = o === undefined ? undefined : str(o.name, 256)
+    if (o === undefined) continue
+    const name = str(o.name, 256)
     if (name === undefined) continue
-    const children = o !== undefined && depthLeft > 0 && Array.isArray(o.children) ? walkTree(o.children, cap, depthLeft - 1, ctx) : undefined
-    out.push({ name, ...opt('type', o === undefined ? undefined : enu(o.type, FILE_TYPES)), ...opt('children', children) })
+    ctx.remaining -= 1
+    const children = depthLeft > 0 && Array.isArray(o.children) ? walkTree(o.children, cap, depthLeft - 1, ctx) : undefined
+    out.push({ name, ...opt('type', enu(o.type, FILE_TYPES)), ...opt('children', children) })
   }
   return out
 }
@@ -1281,10 +1314,12 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
     // graphic[].style.image and label.rich.*.backgroundColor.image directly,
     // but the string gate above (ECHART_EXFIL_RE) only matches
     // image:/data:/blob: PREFIXES, so a bare https:// URL slips through and
-    // becomes a tracking/exfil channel. Drop any `image` string carrying a
-    // scheme; text that merely MENTIONS a URL lives under other keys
-    // (label.text, formatter templates) and is unaffected.
-    if (key === 'image' && typeof val === 'string' && val.includes('://')) continue
+    // becomes a tracking/exfil channel. Protocol-relative URLs
+    // (`//evil.example/x.png`) are equally fetched — the browser resolves
+    // them against the page's own scheme — so they are dropped too. Text
+    // that merely MENTIONS a URL lives under other keys (label.text,
+    // formatter templates) and is unaffected.
+    if (key === 'image' && typeof val === 'string' && (val.includes('://') || val.trim().startsWith('//'))) continue
     const s = sanitizeEChartOption(val, depth + 1, budget)
     if (s === undefined) continue
     // Force tooltip.renderMode: 'richText' to prevent ECharts from writing
@@ -1321,7 +1356,7 @@ export function repairGenuiSpec(value: unknown, diag?: GenuiRepairDiagnostic[]):
   // K3 audit #8: optional diagnostic collector — silent when absent (the
   // streaming render path passes nothing), populated by the tools and the
   // fence resolver so alias stitches and drops surface to model + user.
-  const ctx: RepairCtx = { remaining: GENUI_LIMITS.maxNodes, ...(diag !== undefined ? { diag } : {}) }
+  const ctx: RepairCtx = { remaining: GENUI_LIMITS.maxNodes, scene3dLeft: GENUI_LIMITS.maxScene3dNodes, ...(diag !== undefined ? { diag } : {}) }
   // Root-level unknown keys (everything but the four spec fields) also
   // vanish silently — record them at the `spec` path.
   if (diag !== undefined) {

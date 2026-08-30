@@ -35,11 +35,18 @@ export const PANEL_LIMITS = {
 
 type PanelLimits = { maxNodes: number; maxAppends: number }
 
-let limits: PanelLimits = { ...PANEL_LIMITS }
+/** Current limits. Const-bound on purpose (audit #9: no rebindable
+ * module-level variable) — the tuning hook below mutates this ONE object in
+ * place, preserving the "applies from the next fold on" semantics. A fully
+ * parameterized fold was rejected: limits would have to thread through the
+ * public surface (applyPanelOperation is reached not only from tests but
+ * from the fence publisher pipeline), which is a behavior-risking API
+ * change; the const binding keeps every caller and test untouched. */
+const limits: PanelLimits = { ...PANEL_LIMITS }
 
 /** Override the panel limits (operator tuning / tests). Applied at the next fold. */
 export function setPanelLimits(next: Partial<PanelLimits>): void {
-  limits = { ...limits, ...next }
+  Object.assign(limits, next)
 }
 
 /** Three-part stable order: [messageSeq, textBlockIndex, fenceIndex]. */

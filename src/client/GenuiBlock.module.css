@@ -930,8 +930,10 @@ button.ftNameBtn[aria-expanded] { cursor: pointer; }
 
 .breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: var(--dsl-g-gap-xs); font-size: var(--dsl-g-font-title); }
 .bcItem { display: inline-flex; align-items: center; gap: var(--dsl-g-gap-xs); }
-.bcText { color: var(--dsw-alias-label-secondary); cursor: pointer; }
-.bcText:hover { color: var(--dsl-g-accent); }
+/* Breadcrumb items are display-only spans (no onClick): a pointer cursor or
+   hover recolor would falsely advertise clickability. The last item keeps its
+   current-position emphasis via .bcCurrent. */
+.bcText { color: var(--dsw-alias-label-secondary); cursor: default; }
 .bcCurrent { color: var(--dsw-alias-label-primary); font-weight: 600; cursor: default; }
 .bcSep { color: var(--dsw-alias-label-caption, var(--dsw-alias-label-tertiary)); }
 
