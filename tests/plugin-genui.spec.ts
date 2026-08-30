@@ -47,10 +47,11 @@ describe('genui:fence section', () => {
     const section = assembly.sections.find(s => s.name === 'genui:fence')
     expect(section).toBeDefined()
     const text = typeof section!.text === 'string' ? section!.text : ''
-    // Budget: 3200 chars keeps the mixed CJK/ASCII section near ~1k tokens
-    // (CJK ≈ 1 tok/char, ASCII ≈ 0.25 tok/char) — roughly half of the
-    // original ~6.1k chars / ~2.3k tokens measured in issue #29.
-    expect(text.length).toBeLessThanOrEqual(3200)
+    // Budget: the section later grew the per-type field table, the alias
+    // blacklist, and the validate_dsh_ui pre-flight rules — it now measures
+    // ~4.1k chars (≈1.6k mixed tokens). 4800 keeps it bounded against
+    // regression bloat while still listing every allowed type and its fields.
+    expect(text.length).toBeLessThanOrEqual(4800)
     for (const type of WHITELISTED_COMPONENT_TYPES) {
       expect(text).toContain(type)
     }

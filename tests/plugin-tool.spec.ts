@@ -130,81 +130,122 @@ describe('render_ui projections', () => {
 describe('validate_dsh_ui tool', () => {
   const vtool = createValidateDshUiTool()
 
+  // The verdict is an OBJECT since the output-structure change: `ok` plus
+  // a model-facing `message`, plus a `diagnostics` list (renamed /
+  // dropped-unknown-key / dropped-node) whenever repair had to stitch or drop
+  // anything. A fully silent repair carries NO diagnostics key.
+  type Verdict = {
+    ok: boolean
+    message: string
+    diagnostics?: Array<{ kind: string; path: string; detail: string }>
+  }
+  const verdictOf = async (args: unknown): Promise<Verdict> =>
+    (await vtool.execute(args)) as Verdict
+
   it('registers under the validate_dsh_ui name with a spec argument', () => {
     expect(vtool.name).toBe('validate_dsh_ui')
     expect(vtool.description).toContain('dsh-ui fence')
     const parameters = vtool.parameters as { required?: string[] }
     expect(parameters.required).toContain('spec')
+    // The output schema declares the object verdict shape (ok + message).
+    const schema = vtool.output.schema as { type?: string }
+    expect(schema.type).toBe('object')
   })
 
   it('approves a valid fence body (string or object)', async () => {
     const good = '{"title":"x","items":[{"type":"text","content":"好"}]}'
-    expect(String(await vtool.execute({ spec: good }))).toContain('✅')
-    expect(String(await vtool.execute({ spec: JSON.parse(good) }))).toContain('✅')
-    expect(String(await vtool.execute(good))).toContain('✅')
+    for (const args of [{ spec: good }, { spec: JSON.parse(good) }, good]) {
+      const verdict = await verdictOf(args)
+      expect(verdict.ok).toBe(true)
+      expect(verdict.message).toContain('✅')
+      expect(verdict.message).toContain('1 个组件')
+    }
+    // A fully silent repair must NOT carry a diagnostics list.
+    const verdict = await verdictOf({ spec: good })
+    expect(verdict.diagnostics).toBeUndefined()
   })
 
   it('warns when declared components were silently dropped (issue #42)', async () => {
     // The table has no recognizable rows/columns at all: repair drops it and
     // the tool must not green-light a half-empty tree.
     const dropping = '{"items":[{"type":"table","columns":{},"rows":42},{"type":"text","content":"好"}]}'
-    const value = String(await vtool.execute({ spec: dropping }))
-    expect(value).toContain('❌')
-    expect(value).toContain('声明了 2 个组件')
-    expect(value).toContain('仅成功解析出 1 个')
+    const verdict = await verdictOf({ spec: dropping })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('❌')
+    expect(verdict.message).toContain('声明了 2 个组件')
+    expect(verdict.message).toContain('仅成功解析出 1 个')
+    // The dropped node is NAMED in the diagnostics list, not hidden.
+    expect(verdict.diagnostics).toHaveLength(1)
+    expect(verdict.diagnostics![0]).toMatchObject({ kind: 'dropped-node', path: 'items[0]' })
   })
 
   it('stays green when object-shaped tables heal instead of dropping', async () => {
     const healed = '{"items":[{"type":"table","columns":[{"title":"a","key":"k"}],"data":[{"k":"v"}]}]}'
-    const value = String(await vtool.execute({ spec: healed }))
-    expect(value).toContain('✅')
+    const verdict = await verdictOf({ spec: healed })
+    expect(verdict.ok).toBe(true)
+    expect(verdict.message).toContain('✅')
+    // The heal is an alias stitch (`data` → `rows`), and the object
+    // verdict surfaces it as a renamed diagnostic instead of staying silent.
+    expect(verdict.message).toContain('别名键已自动缝补')
+    expect(verdict.diagnostics).toHaveLength(1)
+    expect(verdict.diagnostics![0]!.kind).toBe('renamed')
   })
 
   it('does not mistake file-tree children for dropped components', async () => {
     const tree = '{"items":[{"type":"file-tree","items":[{"name":"src","type":"dir","children":[{"name":"a.ts","type":"file"}]}]}]}'
-    const value = String(await vtool.execute({ spec: tree }))
-    expect(value).toContain('✅')
+    const verdict = await verdictOf({ spec: tree })
+    expect(verdict.ok).toBe(true)
+    expect(verdict.message).toContain('✅')
   })
 
   it('reports parse failures with position and bracket counts', async () => {
     // The real-world failure: rows-array `]` emitted as `}` (stray closer).
     const bad = '{"title":"x","items":[{"type":"table","columns":["a"],"rows":[["1"]}]}]}]}'
-    const value = String(await vtool.execute({ spec: bad }))
-    expect(value).toContain('❌')
-    expect(value).toContain('解析失败')
+    const verdict = await verdictOf({ spec: bad })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('❌')
+    expect(verdict.message).toContain('解析失败')
     // Bracket-count diagnostic points at the stray `}`.
-    expect(value).toContain('括号计数')
-    expect(value).toContain(']}')
+    expect(verdict.message).toContain('括号计数')
+    expect(verdict.message).toContain(']}')
     // Repairable: the reply hands the model the fixed JSON instead of
     // asking it to re-author the fix by hand.
-    expect(value).toContain('已自动修复')
-    const match = /```\n([\s\S]*)\n```/.exec(value)
+    expect(verdict.message).toContain('已自动修复')
+    // The fixed body sits in a fence block: the opener is three backticks,
+    // the close is TWO — anchor the capture at the end of the message.
+    const match = /```\n([\s\S]*)\n``$/.exec(verdict.message)
     expect(match).not.toBeNull()
     expect(() => JSON.parse(match![1]!)).not.toThrow()
   })
 
   it('rejects JSON that parses but is not a GenUI spec', async () => {
-    const value = String(await vtool.execute({ spec: '{"a":1}' }))
-    expect(value).toContain('❌')
-    expect(value).toContain('items')
+    const verdict = await verdictOf({ spec: '{"a":1}' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('❌')
+    expect(verdict.message).toContain('items')
   })
 
   it('rejects a missing spec argument', async () => {
-    const value = String(await vtool.execute({}))
-    expect(value).toContain('❌')
-    expect(value).toContain('缺少 spec')
+    const verdict = await verdictOf({})
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('❌')
+    expect(verdict.message).toContain('缺少 spec')
   })
 
   it('reports MISSING closers in the right direction (缺 not 多)', async () => {
-    const value = String(await vtool.execute({ spec: '{"items": [{"type": "text"' }))
-    expect(value).toContain('缺')
+    const verdict = await verdictOf({ spec: '{"items": [{"type": "text"' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('缺')
     // exactly two unclosed braces: {×2 vs }×0
-    expect(value).toContain('缺 2 个 }')
+    expect(verdict.message).toContain('缺 2 个 }')
+    expect(verdict.message).not.toContain('多 1 个 }')
   })
 
   it('reports EXTRA closers in the right direction (多 not 缺)', async () => {
-    const value = String(await vtool.execute({ spec: '{"items": []}}' }))
-    expect(value).toContain('多 1 个 }')
+    const verdict = await verdictOf({ spec: '{"items": []}}' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('多 1 个 }')
+    expect(verdict.message).not.toContain('缺 1 个 }')
   })
 
   it('counts nodes inside tabs like the panel fold does', async () => {
@@ -215,20 +256,22 @@ describe('validate_dsh_ui tool', () => {
       ] }],
     }
     // 1 tabs node + 3 inner nodes = 4 (the old local counter said 1).
-    const value = String(await tool.execute({ spec }))
-    expect(value).toContain('4 个组件')
-    const vv = String(await vtool.execute({ spec: JSON.stringify(spec) }))
-    expect(vv).toContain('4 个组件')
+    const value = await tool.execute({ spec })
+    expect(String(value)).toContain('4 个组件')
+    const verdict = await verdictOf({ spec: JSON.stringify(spec) })
+    expect(verdict.ok).toBe(true)
+    expect(verdict.message).toContain('4 个组件')
   })
 
   it('returns the AUTO-REPAIRED JSON when the body is repairable', async () => {
     // trailing comma + missing closing brackets — tier-1/tier-2 heal it.
     const bad = '{"items":[{"type":"text","content":"你好"},],'
-    const value = String(await vtool.execute({ spec: bad }))
-    expect(value).toContain('已自动修复')
-    expect(value).toContain('直接作为围栏正文发出即可')
-    // the repaired body appears verbatim and parses
-    const match = /```\n([\s\S]*)\n```/.exec(value)
+    const verdict = await verdictOf({ spec: bad })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('已自动修复')
+    expect(verdict.message).toContain('直接作为围栏正文发出即可')
+    // the repaired body appears verbatim inside the fence block and parses
+    const match = /```\n([\s\S]*)\n``$/.exec(verdict.message)
     expect(match).not.toBeNull()
     const repaired = match![1]!
     expect(() => JSON.parse(repaired)).not.toThrow()
@@ -237,11 +280,47 @@ describe('validate_dsh_ui tool', () => {
   })
 
   it('keeps the diagnostics-only reply when the body cannot be repaired', async () => {
-    const value = String(await vtool.execute({ spec: '{"items": [{"type": "tex' }))
-    // repairable in theory, but the result is not a valid spec (missing content) — wait:
-    // this one IS completable but the spec has no valid nodes; assert the no-auto-repair path:
     const bad = '{"title": "x", garbage'
-    const v2 = String(await vtool.execute({ spec: bad }))
-    expect(v2).toContain('自动修复未能恢复')
+    const verdict = await verdictOf({ spec: bad })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('解析失败')
+    expect(verdict.message).toContain('自动修复未能恢复')
+    expect(verdict.message).toContain('常见原因')
+    // This path offers NO auto-fixed fence and carries no diagnostics.
+    expect(verdict.message).not.toContain('已自动修复')
+    expect(verdict.diagnostics).toBeUndefined()
+  })
+
+  it('surfaces alias stitches as renamed diagnostics on a valid spec', async () => {
+    const alias = '{"items":[{"type":"callout","content":"hi","type_":"info"}]}'
+    const verdict = await verdictOf({ spec: alias })
+    expect(verdict.ok).toBe(true)
+    expect(verdict.message).toContain('✅')
+    expect(verdict.message).toContain('⚠️ 1 处别名键已自动缝补——能用但请改用正名')
+    expect(verdict.diagnostics).toHaveLength(1)
+    expect(verdict.diagnostics![0]!.kind).toBe('renamed')
+    expect(verdict.diagnostics![0]!.path).toBe('items[0]')
+    expect(verdict.diagnostics![0]!.detail).toContain("'tone'")
+  })
+
+  it('reports unknown keys as dropped-unknown-key diagnostics', async () => {
+    const verdict = await verdictOf({ spec: '{"items":[{"type":"text","content":"a","foo":1}]}' })
+    expect(verdict.ok).toBe(true)
+    expect(verdict.message).toContain('1 处非法/多余键被无声丢弃——逐键比对字段表')
+    expect(verdict.diagnostics).toHaveLength(1)
+    expect(verdict.diagnostics![0]!.kind).toBe('dropped-unknown-key')
+    expect(verdict.diagnostics![0]!.path).toBe('items[0]')
+  })
+
+  it('warns when the auto-repaired JSON still carries alias keys', async () => {
+    // The fence is repairable, but the FIXED body still uses an alias key:
+    // the reply must warn, or the model re-emits alias-keyed JSON forever.
+    const bad = '{"items":[{"type":"callout","content":"你好","type_":"info"},],'
+    const verdict = await verdictOf({ spec: bad })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('已自动修复')
+    expect(verdict.message).toContain('修复后的 JSON 仍含 1 处别名键：能用但请改用正名')
+    expect(verdict.diagnostics).toHaveLength(1)
+    expect(verdict.diagnostics![0]!.kind).toBe('renamed')
   })
 })

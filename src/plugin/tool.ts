@@ -23,6 +23,7 @@ import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { GenericCallView, GenericResultView, JsonSchemaNode, ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { GenuiSpec } from '../client/spec.ts'
 import { GENUI_LIMITS, countDeclaredGenuiNodes, countGenuiNodes, repairGenuiSpec } from '../client/guard.ts'
+import type { GenuiRepairDiagnostic } from '../client/guard.ts'
 import { completeFenceJson } from '../shared/fence-repair.ts'
 
 /**
@@ -200,9 +201,9 @@ export function createRenderUiTool(): ToolDefinition {
  * "verify before you send". Purely local: no LLM, no network, no DOM.
  */
 const VALIDATE_DESCRIPTION =
-  'Validate the JSON body of a ```dsh-ui fence BEFORE emitting it — use for non-trivial specs (≥3 nodes or containing a table); skip for trivial ones (≤2 nodes). '
+  'Validate the JSON body of a ```dsh-ui fence BEFORE emitting it — required when the spec contains a table/chart or a nested container (row/col/grid/card/tabs/accordion) at any level, or has ≥2 nodes; skip only for a single flat node. '
   + 'Pass the exact JSON text you are about to put inside the fence as the "spec" argument (a string). '
-  + 'Returns ✅ when it parses as a valid GenUI spec, or ❌ with the exact position, bracket counts, and likely causes when it does not — fix the JSON, re-validate, and only then emit the fence. '
+  + 'Returns an object: ok=true means the fence may be emitted, ok=false means fix first; every result carries a model-facing message, and when repair had to stitch or drop anything a diagnostics list (renamed / dropped-unknown-key / dropped-node) names each one — renamed means usable but switch to the canonical name. '
   + 'When the JSON is broken but repairable (unescaped quotes, trailing commas, missing closers), the ❌ reply INCLUDES the auto-repaired JSON — copy it verbatim into the fence instead of rewriting by hand.'
 
 const VALIDATE_PARAMETERS: Record<string, unknown> = {
@@ -277,6 +278,47 @@ function bracketDiagnostic(raw: string): string {
 const COMMON_CAUSES =
   '常见原因：① 收尾括号错位/缺失（{ 与 }、[ 与 ] 数量不相等）② 字符串值内用了半角引号 "（中文引语请用 “” 或 「」）③ 尾随逗号 ④ 字符串未闭合'
 
+/**
+ * Project repair diagnostics to plain object literals. The tool's canonical
+ * value must satisfy `JsonValue` (a recursive index-signature type), and the
+ * `GenuiRepairDiagnostic` INTERFACE has no implicit index signature — a
+ * field-by-field literal keeps the return type honest.
+ */
+function toDiagnostics(diag: readonly GenuiRepairDiagnostic[]): Array<{ kind: string; path: string; detail: string }> {
+  return diag.map(d => ({ kind: d.kind, path: d.path, detail: d.detail }))
+}
+
+/**
+ * Output schema: the verdict is an OBJECT — `ok` + model-facing `message`,
+ * plus `diagnostics` (the guard's GenuiRepairDiagnostic list: renamed /
+ * dropped-unknown-key / dropped-node) whenever the repair walk had to stitch
+ * or drop anything (K3 audit #8). Absent `diagnostics` = fully silent repair.
+ */
+const VALIDATE_OUTPUT_SCHEMA: JsonSchemaNode = {
+  type: 'object',
+  description: 'Validation verdict: ok flag, model-facing message, and repair diagnostics (renamed / dropped-unknown-key / dropped-node) when repair stitched or dropped anything.',
+  properties: {
+    ok: { type: 'boolean', description: 'Whether the spec is valid and the fence may be emitted.' },
+    message: { type: 'string', description: 'Human-readable verdict text (✅ ready / ❌ fix first).' },
+    diagnostics: {
+      type: 'array',
+      description: 'Repair diagnostics from the guard; absent when nothing was stitched or dropped.',
+      items: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['renamed', 'dropped-unknown-key', 'dropped-node'], description: 'renamed = alias key consumed as its canonical name; dropped-unknown-key = field not in the type field table; dropped-node = whole node dropped.' },
+          path: { type: 'string', description: 'Dotted path of the node in the spec tree, e.g. items[2].' },
+          detail: { type: 'string', description: 'One-line explanation of what was stitched or dropped.' },
+        },
+        required: ['kind', 'path', 'detail'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['ok', 'message'],
+  additionalProperties: false,
+}
+
 /** Build the validate_dsh_ui tool definition (registered alongside render_ui). */
 export function createValidateDshUiTool(): ToolDefinition {
   return {
@@ -284,15 +326,29 @@ export function createValidateDshUiTool(): ToolDefinition {
     description: VALIDATE_DESCRIPTION,
     parameters: VALIDATE_PARAMETERS,
     output: {
-      schema: { type: 'string', description: 'Validation verdict for the model.' },
+      schema: VALIDATE_OUTPUT_SCHEMA,
       render(_args: unknown, value: JsonValue): ContentBlock[] {
-        return [{ type: 'text', text: String(value) }]
+        // Model-facing content = the message plus one line per diagnostic, so
+        // the exact renamed key / dropped path reaches the model verbatim.
+        const verdict = typeof value === 'object' && value !== null && !Array.isArray(value) && 'message' in value
+          ? value as { message: JsonValue; diagnostics?: JsonValue }
+          : undefined
+        if (verdict === undefined) {
+          return [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }]
+        }
+        let text = String(verdict.message)
+        if (Array.isArray(verdict.diagnostics)) {
+          for (const d of verdict.diagnostics) {
+            if (typeof d === 'object' && d !== null && 'detail' in d) text += `\n- ${String((d as { detail: JsonValue }).detail)}`
+          }
+        }
+        return [{ type: 'text', text }]
       },
     },
     async execute(args: unknown): Promise<JsonValue> {
       const raw = fenceTextOf(args)
       if (raw === null || raw.trim() === '') {
-        return '❌ validate_dsh_ui：缺少 spec 参数 —— 把围栏 JSON 文本作为 spec 传入。'
+        return { ok: false, message: '❌ validate_dsh_ui：缺少 spec 参数 —— 把围栏 JSON 文本作为 spec 传入。' }
       }
       let parsed: unknown
       try {
@@ -304,21 +360,62 @@ export function createValidateDshUiTool(): ToolDefinition {
         // FIXED JSON instead of asking it to re-author the fix — re-writing
         // the whole fence by hand is where the next typo comes from.
         const repaired = completeFenceJson(raw)
-        if (repaired !== null && repairGenuiSpec(JSON.parse(repaired.text) as unknown) !== null) {
-          return `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  已自动修复 ${repaired.repairs} 处，下面是修复后的 JSON，直接作为围栏正文发出即可（无需再验证）：\n\`\`\`\n${repaired.text}\n\`\`\``
+        if (repaired !== null) {
+          // K3 audit #8: collect diagnostics from the REPAIRED tree too — alias
+          // stitches inside the auto-fixed JSON must not be silent, or the
+          // model copies alias-keyed JSON back into fences forever.
+          const repairedDiag: GenuiRepairDiagnostic[] = []
+          if (repairGenuiSpec(JSON.parse(repaired.text) as unknown, repairedDiag) !== null) {
+            const renamedCount = repairedDiag.filter(d => d.kind === 'renamed').length
+            const warn = renamedCount > 0 ? `  ⚠️ 修复后的 JSON 仍含 ${renamedCount} 处别名键：能用但请改用正名。\n` : ''
+            return {
+              ok: false,
+              message: `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  已自动修复 ${repaired.repairs} 处，下面是修复后的 JSON，直接作为围栏正文发出即可（无需再验证）：\n${warn}\`\`\`\n${repaired.text}\n\`\``,
+              ...(repairedDiag.length > 0 ? { diagnostics: toDiagnostics(repairedDiag) } : {}),
+            }
+          }
         }
-        return `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  自动修复未能恢复（结构损坏），请按错误信息修正后重新调用本工具验证，通过后再发出围栏。\n${COMMON_CAUSES}`
+        return {
+          ok: false,
+          message: `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  自动修复未能恢复（结构损坏），请按错误信息修正后重新调用本工具验证，通过后再发出围栏。\n${COMMON_CAUSES}`,
+        }
       }
-      const spec = repairGenuiSpec(parsed)
+      // K3 audit #8: the guard's repair walk records every alias stitch and
+      // silent drop; the tool result surfaces them instead of hiding them.
+      const diag: GenuiRepairDiagnostic[] = []
+      const spec = repairGenuiSpec(parsed, diag)
       if (spec === null) {
-        return '❌ 不是合法 GenUI spec：根对象需要 "items" 数组，且每个节点 type 必须在白名单内（见系统提示词）。请修正后重新验证。'
+        return {
+          ok: false,
+          message: '❌ 不是合法 GenUI spec：根对象需要 "items" 数组，且每个节点 type 必须在白名单内（见系统提示词）。请修正后重新验证。',
+          ...(diag.length > 0 ? { diagnostics: toDiagnostics(diag) } : {}),
+        }
       }
       const validCount = countNodes(spec)
       const declaredCount = countDeclaredGenuiNodes(parsed, GENUI_LIMITS.maxNodes + 1)
       if (declaredCount > validCount) {
-        return `❌ 验证未通过：检测到声明了 ${declaredCount} 个组件，但仅成功解析出 ${validCount} 个（有 ${declaredCount - validCount} 个组件因字段格式异常被丢弃）。常见原因：table 的 columns/rows 不是二维字符串数组、tabs 的 items/content 缺失、嵌套组件字段类型不符。请修正后重新验证。`
+        return {
+          ok: false,
+          message: `❌ 验证未通过：检测到声明了 ${declaredCount} 个组件，但仅成功解析出 ${validCount} 个（有 ${declaredCount - validCount} 个组件因字段格式异常被丢弃）。常见原因：table 的 columns/rows 不是二维字符串数组、tabs 的 items/content 缺失、嵌套组件字段类型不符。请修正后重新验证。`,
+          ...(diag.length > 0 ? { diagnostics: toDiagnostics(diag) } : {}),
+        }
       }
-      return `✅ dsh-ui spec 合法（${validCount} 个组件），可以发出围栏。`
+      // Valid spec, but repair may still have stitched alias keys (blacklist
+      // #1–#3) or dropped unknown keys — warn instead of a bare green check.
+      const renamed = diag.filter(d => d.kind === 'renamed')
+      const dropped = diag.filter(d => d.kind !== 'renamed')
+      let message = `✅ dsh-ui spec 合法（${validCount} 个组件），可以发出围栏。`
+      if (renamed.length > 0) {
+        message += ` ⚠️ ${renamed.length} 处别名键已自动缝补——能用但请改用正名。`
+      }
+      if (dropped.length > 0) {
+        message += ` ⚠️ ${dropped.length} 处非法/多余键被无声丢弃——逐键比对字段表。`
+      }
+      return {
+        ok: true,
+        message,
+        ...(diag.length > 0 ? { diagnostics: toDiagnostics(diag) } : {}),
+      }
     },
     presentCall(): GenericCallView | undefined {
       return { card: 'generic', title: '验证 dsh-ui 围栏', kind: 'other' }

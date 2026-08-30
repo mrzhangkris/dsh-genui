@@ -10,6 +10,13 @@ description: |
 
 **必填字段规则**：`?` 结尾的字段为可选，无 `?` 的字段为必填。缺失必填字段的节点会被渲染器丢弃并显示警告——必须补全才能正常渲染。
 
+**发出前自检（JSON 必须严格合法）**：渲染器的**自动修复只兜底标点级错误且不可见**——字符串内半角引号、尾随逗号、`=` 误当键值分隔符（`"a"="1"`→`"a":"1"`）；**字段名与结构错误唯一可靠的发现途径是 `validate_dsh_ui`**。修不出来的结构错误会红横幅退化成代码块，写错就重发。**最容易犯的错：字符串值里用了半角引号 `"`**——中文引语一律写 `“”` 或 `「」`。发出围栏前自检：① 键值分隔符必须是 `:`（`=` 是错的）② 括号配对：`{` 与 `}`、`[` 与 `]` 数量相等，**收尾序列逐个核对**（长表格最易在最后几行错位：把 `]]}]}` 写成 `]}]}]}`；`"type"` 必须写在对象**内部**，不要补在闭合 `}` 之后）③ 无尾随逗号 ④ 值内引号用中文引号 ⑤ 最后一个字符必须是 `}`。不要在 JSON 字符串里放 markdown；超长表格/列表拆成多个组件分开发，宁短勿长
+
+**三类实测最高频错误（黑名单）**：
+1. 给 `callout`/`badge` 写 `type_` 而不是 `tone`（语气/配色字段只能叫 `tone`）
+2. 给 `code`/`mermaid` 写 `value` 而不是 `code`（代码内容的字段名是 `code`）
+3. 给 `table` 写 `headers` 而不是 `columns`（表头字段的名字是 `columns`）
+
 ```dsh-ui
 {"title":"可选标题","gap":14,"items":[...]}
 ```
@@ -17,13 +24,20 @@ description: |
 ## 组件词汇（只允许这些 type）
 
 **不要发明类型**：只有下列白名单 type 会被渲染；白名单外（如 `summary`）会报 `unknown type` 并被丢弃——用 `callout`/`badge`/`table` 等替代。
-**容器 vs 叶子**：只有容器（`row`/`col`/`grid`/`card`）有 `items` 子组件数组；叶子组件（`stat`/`callout`/`progress` 等）没有 `items`，想放多个 stat 用 `grid` 包。
+**容器/叶子三分法**：
+1. **嵌套容器**（`items` 里装的是子组件，可继续嵌套）：`row`/`col`/`grid`/`card`，以及三种自带嵌套字段的组件——`tabs`（`tabs[].items`）、`accordion`（`items[].items`）、`file-tree`（`children`）
+2. **数据数组叶子**（数组字段只装数据对象，不再嵌子组件）：`list` `table` `steps` `timeline` `keyvalue` `breadcrumb` `radio` `select` `quiz` `scene3d` `diff` `copy`
+3. **纯叶子**（单对象、没有任何子数组字段）：`text` `stat` `callout` `badge` `progress` `divider` `spacer` `code` `json` `copy` `mermaid` `plot` `chart` `echart` `diagram` `avatar` `link` `audio` `video`
+
+**给第三类（纯叶子）写 `items` 会被整体丢弃**；想并排放多个 `stat` 用 `grid` 包。
 
 布局：`text` `row` `col` `grid` `card` `divider` `spacer`
 展示：`stat` `badge` `progress` `list` `table` `keyvalue` `avatar` `timeline` `file-tree` `breadcrumb` `diff` `json` `code` `callout` `steps`
-图表：`chart`（bars/line/donut，可多序列）`plot`（数学函数图）
+图表：`chart`（bars/line/donut，可多序列）`plot`（数学函数图）`echart`（preset 快捷图或原生 option）
 交互：`button` `input` `select` `checkbox` `radio` `switch` `textarea` `tabs` `accordion` `copy`
-高级：`mermaid`（流程图/时序/甘特等）`scene3d`（3D WebGL）`quiz`（点选判题 + 解析 + 重试）
+高级：`mermaid`（流程图/时序/甘特等）`scene3d`（3D WebGL）`quiz`（点选判题 + 解析 + 重试）`diagram`（编辑级架构/流程图，27 种 kind）
+
+**名字对照警告（写错静默失效）**：`tone` 的取值集合**因组件而异**——`callout` 的 tone 是 `info|success|warning|error`，`badge` 的 tone 是 `success|warn|danger|accent`。`warn` ≠ `warning`、`danger` ≠ `error`：给 callout 写 `warn`、给 badge 写 `warning`/`error` 都**不会报错**，只会静默失效（tone 不生效）——写前对照下方各组件的字段定义。
 
 ### 布局
 - text: `{"type":"text","size":"h1|h2|h3|body|muted|caption","content":"...","center":true?}`
@@ -33,7 +47,7 @@ description: |
 - divider: `{"type":"divider"}`; spacer: `{"type":"spacer"}`
 
 ### 展示
-- stat: `{"type":"stat","label":"...","value":"...","delta":"+12.4%|-3%"}`（`-` 开头自动红、`+` 绿）
+- stat: `{"type":"stat","label":"...","value":"...","delta":"+12.4%|-3%","unit":"ms"}`（`-` 开头自动红、`+` 绿）— 只有 `label`/`value`/`delta`/`unit` 四个字段；单位也可直接写进 value 字符串（如 `"value":"72%"`），不必拆 unit
 - badge: `{"type":"badge","label":"...","tone":"success|warn|danger|accent","icon":"emoji?"}`
 - progress: `{"type":"progress","label":"...","value":0-100,"valueLabel":"70%"}`
 - list: `{"type":"list","items":["..."] 或 [{"title":"...","desc":"..."}]}`
@@ -51,6 +65,7 @@ description: |
 ### 图表
 - chart: `{"type":"chart","kind":"bars|line|donut","data":[{"label":"...","value":n,"color":"#hex?"}],"series":[...]?}` — bars 默认；line 趋势；donut 占比；series 字段 = 分组柱状图；负值数据：柱高为 0 但数值标注照显、donut 负值记 0 弧长（line 正常画负区间）
 - plot: `{"type":"plot","series":[{"expr":"a*sin(b*x)","label":"...","color":"#hex?","params":[{"name":"a","value":1,"min":0,"max":5,"animateTo":3,"durationMs":4000,"loop":true},{"name":"b","value":1,"min":0.5,"max":5}]}],"xMin":-6.28,"xMax":6.28,"title":"..."}` — SVG 函数图；**series 可带 `"kind":"line|area|scatter"`**（缺省 line；area 填色到基线；scatter 散点）；**params 渲染成实时滑块**（拖动即时重绘，**y 轴锁定**=只变曲线不变数轴）；**animateTo 参数会显示播放按钮**（自动动画演示）；SVG 可拖拽平移、滚轮缩放；表达式支持 sin/cos/tan/asin/acos/atan/sqrt/cbrt/exp/log/ln/abs/floor/ceil/round/min/max/pow，常量 pi/e/tau，变量 x（其他字母=参数）
+- echart: `{"type":"echart","preset":"bar|line|area|pie|scatter","data":[{"name":"...","value":n}]}` 或 `{"type":"echart","option":{...原生 ECharts option...}}` — `preset` 快捷方式（配 `data`）与原生 `option` 二选一
 
 ### 交互
 **本地优先（v2.6）**：UI 自己能做的状态变化——判卷、判题、重置、展开、折叠、切换、选中、排序——一律本地即时完成，**零模型往返**。action 只用于必须模型参与的事（生成新内容、执行工具、下一步建议）。
@@ -82,6 +97,7 @@ description: |
 - mermaid: `{"type":"mermaid","code":"graph TD\\nA-->B"}` — flowchart/sequence/class/gantt/pie/er/state/journey；主题自动跟随宿主（暗/浅）。**节点文本三戒**：① 含 `()`/`[]`/特殊字符必须加引号 `["text"]`（裸写会被解析成圆柱体等形状语法，整图降级显示源码）② 节点内换行只用 `<br/>`（`\n` 会显示为字面文本）③ style 颜色写六位 hex（`#4a6` 简写部分渲染器不认）
 - scene3d: `{"type":"scene3d","title":"...","meshes":[{"shape":"box|sphere|cone|cylinder|torus","color":"#hex?","size":n|[w,h,d]?,"position":[x,y,z]?,"rotation":[rx,ry,rz]?,"scale":n?|[...]?}],"ambient":0-2?,"background":"#hex?"}` — 3D WebGL，可拖拽旋转、滚轮缩放；mesh 数量 1–5 个
 - quiz: `{"type":"quiz","question":"...","options":[{"label":"...","correct":true?,"feedback":"..."?}],"explanation":"...","id":"..."?,"action":"answer"?}` — 教学问答：点选即判题、可重试；`id` 变化时重置；带 action 时答案同时回传模型
+- diagram: `{"type":"diagram","kind":"...","nodes":[...],"edges":[...]}` — 编辑级架构/流程图（27 种 kind），节点与连线由 `nodes`/`edges` 描述
 
 ## 什么时候用：内容类型 → 组件映射
 
@@ -109,12 +125,14 @@ description: |
 
 1. **围栏放哪，组件就出现在哪** —— 文字在前后自然流动，不要用工具、不要解释"这是一个围栏"。**围栏一闭合就立即渲染**（不等整条回答结束），所以可以边写文字边出组件
 2. **组合优先**：复杂界面用 `grid`+`card`+`stat`+`table` 拼，不要追求单一巨型组件
-3. **JSON 必须严格合法，发出前完成自检**：渲染器**自动修复**标点级小错——字符串内半角引号、尾随逗号、`=` 误当键值分隔符（`"a"="1"`→`"a":"1"`）；对**已完结消息**还尝试修结构级错误（缺/错闭合括号、`"type":"X"` 掉在根对象外）。但**这些是兜底不是依赖**——修不出来的结构错误会红横幅退化成代码块，写错就重发。**最容易犯的错：字符串值里用了半角引号 `"`**——中文引语一律写 `“”` 或 `「」`。发出围栏前自检：① 键值分隔符必须是 `:`（`=` 是错的）② 括号配对：`{` 与 `}`、`[` 与 `]` 数量相等，**收尾序列逐个核对**（长表格最易在最后几行错位：把 `]]}]}` 写成 `]}]}]}`；`"type"` 必须写在对象**内部**，不要补在闭合 `}` 之后）③ 无尾随逗号 ④ 值内引号用中文引号 ⑤ 最后一个字符必须是 `}`。不要在 JSON 字符串里放 markdown；超长表格/列表拆成多个组件分开发，宁短勿长
-4. **不要嵌套围栏**：dsh-ui 里不要再包 ``` 代码围栏
-5. **深色主题友好**：配色选深底亮色；UI 主题跟随应用
-6. **场景判断**：先查上面的映射表 —— 内容类型命中就上对应组件；只有纯文字问答、一句话能说清时才不用
-7. **图表范围**：`plot` 给合理 xMin/xMax（如 -3.14 到 3.14）；3D 场景 mesh 少而精
-8. **规格要紧凑**：整棵组件树 ≤200 节点、≤8 层嵌套（超出部分会被渲染器裁掉），避免巨型 spec
-9. **一个主题选一个主组件**：命中映射表后选**一种**组件承载，同一信息不要用两种组件重复表达（同一批数据又画 bars 又画 donut = 冗余）
-10. **数量纪律**：一条回答 3–8 个组件为宜，宁缺毋滥。反例：该用 `table` 对比时写三段 `text`；一个 `stat` 能说清的事套 `card`+`grid`；与内容无关的 `scene3d` 炫技——3D 只在内容本身就是几何/空间时才用
-11. **先验后发（复杂 UI）**：发出 ```dsh-ui 围栏前，若 spec ≥3 个组件或含 `table`（长表格最易括号错位），先调用 `validate_dsh_ui` 工具（参数 `spec` 传围栏内的 JSON 文本）验证；返回 ❌ 就按错误信息（位置、括号计数、常见原因）修正后重新验证，✅ 再发出；**若 ❌ 回复里附了「已自动修复」的 JSON，直接照抄那份发出，无需再验证**；简单 UI（≤2 个组件）不必验证，渲染器会自动修复大部分标点/括号错误
+3. **不要嵌套围栏**：dsh-ui 里不要再包 ``` 代码围栏
+4. **深色主题友好**：配色选深底亮色；UI 主题跟随应用
+5. **场景判断**：先查上面的映射表 —— 内容类型命中就上对应组件；只有纯文字问答、一句话能说清时才不用
+6. **规格要紧凑**：整棵组件树 ≤200 节点、≤8 层嵌套（超出部分会被渲染器裁掉），避免巨型 spec
+
+## 行为纪律（图表 / 主题 / 数量 / 验证）
+
+1. **图表范围**：`plot` 给合理 xMin/xMax（如 -3.14 到 3.14）；3D 场景 mesh 少而精
+2. **一个主题选一个主组件**：命中映射表后选**一种**组件承载，同一信息不要用两种组件重复表达（同一批数据又画 bars 又画 donut = 冗余）
+3. **数量纪律**：一条回答 3–8 个组件为宜，宁缺毋滥。反例：该用 `table` 对比时写三段 `text`；一个 `stat` 能说清的事套 `card`+`grid`；与内容无关的 `scene3d` 炫技——3D 只在内容本身就是几何/空间时才用
+4. **先验后发（复杂 UI）**：spec 含**表格/图表/嵌套容器任一层级**，或**节点数 ≥2** 时，发出 ```dsh-ui 围栏前先调用 `validate_dsh_ui` 工具（参数 `spec` 传围栏内的 JSON 文本）验证；返回 ❌ 就按错误信息（位置、括号计数、常见原因）修正后重新验证，✅ 再发出；**若 ❌ 回复里附了「已自动修复」的 JSON，直接照抄那份发出，无需再验证**。单个节点的极简 spec 可不验证——但记住：**渲染器的自动修复只兜底标点级错误且不可见，字段名与结构错误唯一可靠的发现途径是 `validate_dsh_ui`**

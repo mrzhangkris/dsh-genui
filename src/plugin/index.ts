@@ -101,11 +101,58 @@ The spec is a white-listed component tree rendered inline where the fence sits. 
 - 图表: chart (bars|line|donut) · echart (preset|option) · plot (函数图)
 - 交互: button · input · textarea · select · checkbox · switch · slider · radio · submit · quiz · link · tabs · accordion
 - 高级: mermaid (flowchart/sequence/class/gantt/pie/er/state/journey) · diagram (编辑级架构/流程图，27 种 kind) · scene3d (3D WebGL)
-Required fields (missing → node dropped; ? = optional): text=content · stat=label+value · table=columns/headers+rows · list=items · keyvalue=pairs · callout=content · steps=steps · code=code · json=value · button=label · radio/select=options · chart=data/series · plot=series · mermaid=code · scene3d=meshes · quiz=question+options · copy=text · progress=value · badge=label · timeline/breadcrumb/diff/accordion=items · tabs=tabs
+Field table — one line per type, canonical names ONLY (missing required → node dropped; 可选 = may be omitted):
+- text: content(string)必填；size可选(h1|h2|h3|body|muted|caption)；center可选(true)
+- row: items(节点数组)必填；wrap可选(true)；spacer可选(true)
+- col: items(节点数组)必填；gap可选(数字)
+- grid: items(节点数组)必填；cols可选(数字)
+- card: items(节点数组)必填；title可选(string)
+- divider: 无字段
+- spacer: 无字段
+- badge: label(string)必填；tone可选(success|warn|danger|accent)；icon可选
+- stat: label+value必填；delta可选；unit可选
+- progress: value(0–100数字)必填；label/valueLabel可选
+- list: items必填
+- table: columns(string数组)+rows(二维数组)必填
+- keyvalue: pairs({key,value}数组)必填
+- avatar: name(string)必填；color可选
+- audio: src(string)必填；alt/loop可选
+- video: src(string)必填；poster/loop/muted/aspectRatio可选(16:9|4:3|1:1|9:16)
+- timeline: items必填
+- file-tree: items必填
+- breadcrumb: items(string数组)必填
+- callout: content(string)必填；tone可选(info|success|warning|error)；title可选
+- steps: steps({title}数组)必填；current可选(数字)
+- diff: diffs({path,oldText,newText}数组)必填
+- json: value(任意JSON)必填
+- code: code(string)必填；lang可选
+- copy: text(string)必填；label可选
+- chart: data({label,value}数组)或series必填；kind可选(bars|line|donut)
+- echart: 预设用 data/series、完整配置用 option，至少其一必填；title/height可选；preset可选(bar|line|area|pie|scatter)
+- plot: series({expr}数组)必填；xMin/xMax/yMin/yMax可选(数字)
+- button: label(string)必填；tone可选(primary|danger|success|ghost)；action/full/small/icon可选
+- input: 全部可选(label/placeholder/value/inputType/action/id)
+- textarea: 全部可选(label/placeholder/rows/value/action/id)
+- checkbox: label(string)必填；checked/action可选
+- switch: label(string)必填；checked/action可选
+- slider: min/max/step/value(数字，缺省0–100)；label/action可选
+- select: options(string数组)必填；label/selected/action可选
+- radio: options(string数组)必填；group/answer/explanation可选
+- submit: label(string)必填；action/groups可选
+- quiz: question(string)+options必填；explanation可选
+- link: label(string)必填；href可选(http[s]/mailto)
+- tabs: tabs({label,items}数组)必填
+- accordion: items({title,items}数组)必填
+- mermaid: code(string)必填
+- scene3d: meshes(1–5个)必填；title/background可选
+- diagram: kind+nodes({id,label}数组)必填；edges/zones/variant/title/theme可选
+
+高频错误黑名单（发出前自查，validate_dsh_ui 会提示）: ① callout/badge 写 type_ —— 正名是 tone；② code/mermaid 写 value —— 正名是 code；③ table 写 headers —— 正名是 columns。
 
 Rules:
 - 触发: 结构化表达优于纯文本时主动用（要点、强调、对比、流程、步骤、状态、数据、演示），纯问答与一句话不套 UI；一个主题一个主组件，每次 3–8 个组件，同一数据不重复出现。
-- JSON 严格: 坏围栏降级为代码块；≥3 节点或含 table 的围栏发出前调用 validate_dsh_ui，❌ 修好再发（若附「已自动修复」JSON 照抄即可）。
+- JSON 严格: 坏围栏降级为代码块；含表格/图表/嵌套容器（row/col/grid/card/tabs/accordion）任一层级 或 节点数≥2 的围栏发出前调用 validate_dsh_ui，❌ 修好再发（若附「已自动修复」JSON 照抄即可）。
+- 键名纪律: 节点的键只取自字段表，多余或拼错的可选字段名会被渲染器无声丢弃、不给任何警告；写完逐键比对字段表。
 - 规模: ≤200 节点、嵌套≤8 层（超出被截断）；3D mesh 1–5；plot 给合理 xMin/xMax。
 - LOCAL-FIRST + actions: UI 能自己做的状态变化（判卷、判题、重置、展开、选中）就地完成，零往返；action 只用于必须模型参与的事。交互组件带 "action":"name"，交互以 [genui-action] name + 组件数据回传，届时重渲染更新 UI；无 action 的按钮禁用。
 - Durable state: 交互状态按「会话+内容指纹」持久化——刷新/重放恢复；重渲染相同内容保留，新内容重置。
