@@ -7,7 +7,9 @@
  * notifies subscribers only when the folded snapshot actually changes.
  *
  * Ordering: no "last caller wins", no Infinity. Operations from DIFFERENT
- * sources always both apply; replays of the same source are idempotent; a
+ * sources always both apply; IDENTICAL replays of the same source are
+ * idempotent (a same-source re-publish with changed content is an edit and
+ * re-folds); a
  * later replace resets everything earlier; an append beyond the budget is
  * remembered as an overflow barrier so an out-of-order earlier replace can
  * re-fold deterministically. A local `/panel` override (default panel or
@@ -22,6 +24,16 @@
  */
 import type { GenuiSpec, GenuiTab } from './spec.ts'
 import { countGenuiNodes } from './guard.ts'
+import { fingerprint } from './interaction-store.ts'
+
+/** Deterministic identity of one operation: mode + order + spec CONTENT.
+ * A replay of this exact operation is an idempotent no-op; the SAME source
+ * re-publishing with changed content is an EDIT and re-folds (sourceId
+ * alone must not define identity — the pre-fix dedup keyed only
+ * sourceId/mode and swallowed edited re-publishes as replays). */
+function opIdentity(op: PanelOperation): string {
+  return fingerprint(JSON.stringify({ m: op.mode, o: op.order, s: op.spec }))
+}
 
 /** Panel scale limits — adjustable defaults (design doc: scale limits are
  *  configurable, not law). Folds read the CURRENT limits, so tuning applies
@@ -74,12 +86,14 @@ interface FoldResult {
 
 interface SessionPanelState {
   ops: Map<string, PanelOperation>
-  /** Every sourceId ever processed (kept or dropped) — the replay dedup
-   * register. `ops` only keeps the ops in the current fold, so a consumed op
-   * dropped by a later replace used to be indistinguishable from a first
-   * arrival and re-folded on history scroll; `seen` makes replays idempotent
-   * without breaking genuine out-of-order first arrivals. */
-  seen: Map<string, PanelOrder>
+  /** Every sourceId ever processed (kept or dropped) → its operation
+   * identity (opIdentity) — the replay dedup register. The ops map only
+   * keeps the ops in the current fold, so a consumed op dropped by a later
+   * replace used to be indistinguishable from a first arrival and re-folded
+   * on history scroll; the seen register makes IDENTICAL replays idempotent
+   * without breaking genuine out-of-order first arrivals — while a
+   * same-source re-publish with CHANGED content still re-folds as an edit. */
+  seen: Map<string, string>
   overflow: PanelOperation | null
   /** Local /panel override base; null = cleared. */
   local: GenuiSpec | null
@@ -207,15 +221,20 @@ function compareOrder(a: PanelOrder, b: PanelOrder): number {
 function fold(state: SessionPanelState, extra: PanelOperation | null): FoldResult | null {
   if (extra !== null) {
     if (extra.order[0] <= state.localBarrier || extra.order[0] <= state.replayBarrier) return null // old replay under a barrier
-    if (state.seen.has(extra.sourceId)) return null // idempotent replay (kept OR previously consumed)
+    // Idempotent replay = same source AND identical operation content
+    // (kept OR previously consumed). Changed content is an EDIT: it passes
+    // and re-folds, superseding this source's earlier op.
+    if (state.seen.get(extra.sourceId) === opIdentity(extra)) return null
     if (state.overflow !== null && state.overflow.sourceId === extra.sourceId) return null
     if (extra.mode === 'append' && state.overflow !== null && compareOrder(extra.order, state.overflow.order) > 0) {
       // Later than the overflow barrier: rejected without touching the fold.
       return null
     }
   }
-  // Only live ops (strictly after both barriers) participate.
-  const ops = [...state.ops.values()].filter(op => op.order[0] > state.localBarrier && op.order[0] > state.replayBarrier)
+  // Only live ops (strictly after both barriers) participate. An EDIT
+  // (same source, changed content) supersedes that source's earlier op in
+  // the ops map, so every source folds exactly once — no double-appends.
+  const ops = [...state.ops.values()].filter(op => op.order[0] > state.localBarrier && op.order[0] > state.replayBarrier && (extra === null || op.sourceId !== extra.sourceId))
   if (extra !== null) ops.push(extra)
   ops.sort((a, b) => compareOrder(a.order, b.order))
   // The latest VALID replace resets everything before it; start the fold
@@ -261,8 +280,15 @@ function fold(state: SessionPanelState, extra: PanelOperation | null): FoldResul
     kept.push(op)
   }
   if (extra !== null) {
+    // No-net-change check: same size, same sources, same mode, AND the same
+    // spec CONTENT per source (identity fingerprint — a re-fold that only
+    // swapped a source's content is a real change and must commit), plus
+    // the same overflow barrier source.
     const sameSet = kept.length === state.ops.size
-      && kept.every(op => state.ops.get(op.sourceId)?.mode === op.mode)
+      && kept.every(op => {
+        const prev = state.ops.get(op.sourceId)
+        return prev !== undefined && prev.mode === op.mode && opIdentity(prev) === opIdentity(op)
+      })
       && ((overflow === null && state.overflow === null)
         || (overflow !== null && state.overflow !== null && overflow.sourceId === state.overflow.sourceId))
     if (sameSet) return null
@@ -275,11 +301,12 @@ function commit(state: SessionPanelState, result: FoldResult, sessionId: string)
   state.overflow = result.overflow
   state.maxSeenSeq = result.maxSeenSeq
   state.ops = new Map(result.kept.map(op => [op.sourceId, op]))
-  // Every processed op joins the replay dedup register — kept or dropped,
-  // accepted or overflow-rejected: a history-scroll replay must never
-  // re-fold a source the fold already consumed.
-  for (const op of result.kept) state.seen.set(op.sourceId, op.order)
-  if (result.overflow !== null) state.seen.set(result.overflow.sourceId, result.overflow.order)
+  // Every processed op joins the replay dedup register (keyed by its
+  // content identity) — kept or dropped, accepted or overflow-rejected: a
+  // history-scroll replay must never re-fold a source the fold already
+  // consumed; an edited re-publish still can (different identity).
+  for (const op of result.kept) state.seen.set(op.sourceId, opIdentity(op))
+  if (result.overflow !== null) state.seen.set(result.overflow.sourceId, opIdentity(result.overflow))
   writePanelStorage(sessionId, {
     snapshot: state.snapshot,
     local: state.local,

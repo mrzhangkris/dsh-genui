@@ -7,7 +7,9 @@
  * notifies subscribers only when the folded snapshot actually changes.
  *
  * Ordering: no "last caller wins", no Infinity. Operations from DIFFERENT
- * sources always both apply; replays of the same source are idempotent; a
+ * sources always both apply; IDENTICAL replays of the same source are
+ * idempotent (a same-source re-publish with changed content is an edit and
+ * re-folds); a
  * later replace resets everything earlier; an append beyond the budget is
  * remembered as an overflow barrier so an out-of-order earlier replace can
  * re-fold deterministically. A local `/panel` override (default panel or

@@ -93,6 +93,20 @@ describe('panel append fence (settled source)', () => {
     expect(tabs2[1]!.items).toHaveLength(2) // b1 + b2
   })
 
+  it('an edited append under the same source supersedes its earlier contribution (no double merge)', () => {
+    applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
+    applyPanelOperation('p1', { sourceId: 'app', order: [1, 0, 0], mode: 'append', spec: tabsSpec([{ label: 'B', items: [text('b1')] }]) })
+    // Same append source re-published with EDITED content: the source's
+    // earlier b1 contribution is superseded — the fold must not merge b1
+    // AND b1x (pre-fix: the edit was swallowed as an idempotent replay).
+    const status = applyPanelOperation('p1', { sourceId: 'app', order: [1, 0, 0], mode: 'append', spec: tabsSpec([{ label: 'B', items: [text('b1x')] }]) })
+    expect(status).toBe('accepted')
+    const tabs = (getPanelSpec('p1')!.items[0] as { tabs: Array<{ label: string; items: unknown[] }> }).tabs
+    expect(tabs.map(t => t.label)).toEqual(['A', 'B'])
+    expect(tabs[0]!.items).toEqual([text('a1')])
+    expect(tabs[1]!.items).toEqual([text('b1x')])
+  })
+
   it('non-append panel fence still replaces the whole panel', () => {
     applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
     render(renderGenuiFence(JSON.stringify({ panel: true, title: 'R', items: [text('fresh')] }), 'k3', ctx(3)) as never)

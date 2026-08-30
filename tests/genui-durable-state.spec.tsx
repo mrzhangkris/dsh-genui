@@ -9,7 +9,7 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GenuiBlock } from '../src/client/GenuiBlock.tsx'
-import { loadBlockState, saveBlockState } from '../src/client/interaction-store.ts'
+import { fenceStateKey, fingerprint, loadBlockState, panelStateKey, saveBlockState } from '../src/client/interaction-store.ts'
 import type { GenuiSpec } from '../src/client/spec.ts'
 
 beforeEach(() => {
@@ -70,6 +70,34 @@ describe('durable grading state', () => {
     })
     const { container } = renderBlock(paper, 'session-a::legacy')
     expect(container.querySelector('[data-genui-grade]')).not.toBeNull()
+  })
+})
+
+describe('content fingerprint collision resistance (cyrb53 upgrade)', () => {
+  // These two bodies hash IDENTICALLY under the old 32-bit djb2 but must
+  // stay distinct: a collision would hand one block the other's durable
+  // state (answers/lock crossing blocks on a single-cell content edit).
+  const A = '{"items":[{"type":"badge","label":"aaar"}]}'
+  const B = '{"items":[{"type":"badge","label":"aac0"}]}'
+
+  it('is deterministic for identical input and separates single-cell edits', () => {
+    expect(fingerprint(A)).toBe(fingerprint(A))
+    expect(fingerprint('abc')).toBe(fingerprint('abc'))
+    expect(fingerprint('abc')).not.toBe(fingerprint('abd'))
+  })
+
+  it('separates bodies that collide under the old djb2 hash (no state cross-wiring)', () => {
+    expect(fingerprint(A)).not.toBe(fingerprint(B))
+    expect(fenceStateKey('s', 0, A)).not.toBe(fenceStateKey('s', 0, B))
+    expect(panelStateKey('s', A)).not.toBe(panelStateKey('s', B))
+  })
+
+  it('durable state stays per-content: a djb2-colliding edit gets a fresh slate', () => {
+    saveBlockState(fenceStateKey('s', 0, A), { answers: { q1: 'x' }, locked: true })
+    // Pre-fix (djb2): the colliding body shared the key and restored the
+    // other block's graded state. Post-fix: no restore for different content.
+    expect(loadBlockState(fenceStateKey('s', 0, B))).toBeNull()
+    expect(loadBlockState(fenceStateKey('s', 0, A))).toEqual({ answers: { q1: 'x' }, locked: true })
   })
 })
 

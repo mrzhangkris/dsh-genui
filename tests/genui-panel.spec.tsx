@@ -349,6 +349,26 @@ describe('panel operation model (real order, no Infinity)', () => {
     unsub()
   })
 
+  it('an edited re-publish under the same source re-folds (content defines identity, not sourceId alone)', () => {
+    const fn = vi.fn()
+    const unsub = subscribePanel(fn)
+    applyPanelOperation('s1', { sourceId: 'src:x', order: [10, 0, 0], mode: 'replace', spec: { items: [text('v1')] } })
+    expect(getPanelSpec('s1')!.items).toEqual([text('v1')])
+    // Same sourceId + same order, EDITED spec: must NOT be swallowed as an
+    // idempotent replay of the v1 op — the panel shows v2 (pre-fix: the
+    // sameSet/seen dedup keyed only sourceId+mode and ate the edit).
+    const status = applyPanelOperation('s1', { sourceId: 'src:x', order: [10, 0, 0], mode: 'replace', spec: { items: [text('v2')] } })
+    expect(status).toBe('accepted')
+    expect(getPanelSpec('s1')!.items).toEqual([text('v2')])
+    expect(fn).toHaveBeenCalledTimes(2)
+    // The edited op now replays idempotently — content identity, and the
+    // replayed literal is a fresh object with equal content, not the same ref.
+    const replay = applyPanelOperation('s1', { sourceId: 'src:x', order: [10, 0, 0], mode: 'replace', spec: { items: [text('v2')] } })
+    expect(replay).toBe('idempotent')
+    expect(fn).toHaveBeenCalledTimes(2)
+    unsub()
+  })
+
   it('a local clear persists and blocks old replays; a later publish rebuilds', () => {
     direct('s1', { items: [text('x')] }, 5)
     setLocalPanel('s1', null)

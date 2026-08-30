@@ -155,15 +155,27 @@ function solidColor(v: unknown): string | undefined {
 }
 
 /**
- * Link target field: only http(s) and mailto survive. `javascript:`/`data:`
- * and every other scheme degrade to a plain-text node — the model's link is
- * display, not an execution channel.
+ * Link target field: http(s), mailto, and `/`-rooted same-origin paths
+ * survive. `javascript:`/`data:`, every other scheme, and
+ * protocol-relative `//host` URLs degrade to a plain-text node — the
+ * model's link is display, not an execution channel. Same-origin paths
+ * mirror `safeMediaSrc` (see inline comment below for the exact gates).
  */
 function safeHref(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined
   const s = v.trim()
-  if (s.length > 2048) return undefined
-  return /^https?:\/\//i.test(s) || /^mailto:[^@\s]+@[^@\s]+$/i.test(s) ? s : undefined
+  if (s === '' || s.length > 2048) return undefined
+  if (/^https?:\/\//i.test(s)) return s
+  if (/^mailto:[^@\s]+@[^@\s]+$/i.test(s)) return s
+  // Same-origin absolute path (`/docs`, `/api/x?a=1`), mirroring
+  // safeMediaSrc policy: media already accepts `/mmx-files/x.mp3`, links
+  // should accept the same-origin routes of this app (`/docs`). The
+  // second-char gate also mirrors safeMediaSrc: `//host` and `/\host` are
+  // protocol-relative URLs the browser resolves against the page's own
+  // scheme — reject them, along with everything else (relative `docs/x`,
+  // `#frag`, `?q`, `javascript:`, `data:`, any other scheme).
+  if (s.startsWith('/') && !/^[/\\]/.test(s.slice(1))) return s
+  return undefined
 }
 
 /** Media loads bytes, so accept only browser-reachable http(s) or same-origin
@@ -783,9 +795,46 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
     }
     default:
       // Plugin-registered custom node types are opaque to the guard: pass
-      // through unchanged (the renderer's default branch resolves them).
-      return value as GenuiNode
+      // through, but never the original reference — a depth-bounded clone
+      // with prototype-pollution keys stripped (see sanitizeOpaqueNode; the
+      // renderer's default branch resolves the cloned node).
+      return sanitizeOpaqueNode(value, depth)
   }
+}
+
+/** Keys never allowed through an opaque pass-through: a JSON.parse'd spec
+ * can carry own `__proto__`/`constructor`/`prototype` properties, and a
+ * computed-key rebuild (`{ [key]: val }`) would re-create them as own data
+ * properties — downstream spreads (Object.assign, React props) would then
+ * pollute Object.prototype. Object.entries alone does NOT drop them: they
+ * are own enumerable keys like any other, so they are skipped BY NAME. */
+const OPAQUE_DANGEROUS_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+
+/**
+ * Depth-bounded structural clone for plugin-registered custom node types
+ * the guard is otherwise opaque to (the renderer's default branch resolves
+ * them). The original reference is never handed on: the clone strips
+ * `__proto__`/`constructor`/`prototype` at every level and cuts any value
+ * nested deeper than GENUI_LIMITS.maxDepth to null (the depth budget is
+ * shared with the surrounding tree), so a hostile spec cannot smuggle
+ * prototype pollution or unbounded nesting through a custom type.
+ */
+function sanitizeOpaqueNode(value: unknown, depth: number): GenuiNode | null {
+  if (obj(value) === undefined) return null
+  if (depth > GENUI_LIMITS.maxDepth) return null
+  return cloneOpaqueValue(value, depth) as GenuiNode
+}
+
+function cloneOpaqueValue(v: unknown, depth: number): unknown {
+  if (v === null || typeof v !== 'object') return v
+  if (depth > GENUI_LIMITS.maxDepth) return null
+  if (Array.isArray(v)) return v.map(item => cloneOpaqueValue(item, depth + 1))
+  const out: Record<string, unknown> = {}
+  for (const [key, val] of Object.entries(v as Record<string, unknown>)) {
+    if (OPAQUE_DANGEROUS_KEYS.has(key)) continue
+    out[key] = cloneOpaqueValue(val, depth + 1)
+  }
+  return out
 }
 
 /* ---------------- per-type sub-repairers ---------------- */

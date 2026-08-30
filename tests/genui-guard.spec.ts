@@ -151,6 +151,36 @@ describe('repairGenuiSpec: node-level healing', () => {
     expect((spec!.items[0] as { content: string }).content).toHaveLength(GENUI_LIMITS.maxString)
   })
 
+  it('keeps same-origin link paths; rejects schemes and protocol-relative hrefs', () => {
+    const spec = repairGenuiSpec({ items: [
+      { type: 'link', label: 'docs', href: '/docs' },
+      { type: 'link', label: 'query', href: '/api/file?id=1#frag' },
+      { type: 'link', label: 'mail', href: 'mailto:a@b.example' },
+      { type: 'link', label: 'web', href: 'https://example.com/x' },
+      { type: 'link', label: 'js', href: 'javascript:alert(1)' },
+      { type: 'link', label: 'data', href: 'data:text/html,<b>x</b>' },
+      { type: 'link', label: 'tel', href: 'tel:+1234' },
+      { type: 'link', label: 'proto-rel', href: '//evil.example/x' },
+      { type: 'link', label: 'proto-rel-bs', href: '/\\evil.example/x' },
+      { type: 'link', label: 'relative', href: 'docs/relative' },
+      { type: 'link', label: 'anchor', href: '#section' },
+    ] })
+    expect(spec?.items).toEqual([
+      { type: 'link', label: 'docs', href: '/docs' },
+      { type: 'link', label: 'query', href: '/api/file?id=1#frag' },
+      { type: 'link', label: 'mail', href: 'mailto:a@b.example' },
+      { type: 'link', label: 'web', href: 'https://example.com/x' },
+      // Everything below degrades to a href-less link node (plain text).
+      { type: 'link', label: 'js' },
+      { type: 'link', label: 'data' },
+      { type: 'link', label: 'tel' },
+      { type: 'link', label: 'proto-rel' },
+      { type: 'link', label: 'proto-rel-bs' },
+      { type: 'link', label: 'relative' },
+      { type: 'link', label: 'anchor' },
+    ])
+  })
+
   it('keeps safe media URLs and rejects active or local schemes', () => {
     const spec = repairGenuiSpec({ items: [
       { type: 'audio', src: '/mmx-files/a.mp3', alt: 'A', loop: true },
@@ -223,6 +253,41 @@ describe('repairGenuiSpec: node-level healing', () => {
     const spec = repairGenuiSpec({ items: [custom] })
     expect(spec!.items).toHaveLength(1)
     expect(spec!.items[0]).toEqual(custom)
+  })
+
+  it('strips __proto__/constructor/prototype from custom nodes (clone, never reference)', () => {
+    // JSON.parse creates an OWN enumerable `__proto__` data property — the
+    // exact shape a hostile fence body produces. Handing the raw node to the
+    // renderer (or any downstream spread) would pollute Object.prototype.
+    const raw = JSON.parse('{"type":"my-widget","flavor":"pink","__proto__":{"polluted":true},"constructor":{"c":1},"prototype":{"p":2},"data":{"ok":1,"__proto__":{"deep":true}}}')
+    const spec = repairGenuiSpec({ items: [raw] })
+    expect(spec?.items).toHaveLength(1)
+    const node = spec!.items[0] as Record<string, unknown>
+    expect(node).not.toBe(raw) // pass-through is a clone, not the original reference
+    expect(node.flavor).toBe('pink') // legit fields survive
+    expect(Object.keys(node)).toEqual(['type', 'flavor', 'data']) // dangerous keys stripped…
+    expect(Object.keys(node.data as object)).toEqual(['ok']) // …at every level
+    expect(Object.hasOwn(node, '__proto__')).toBe(false)
+    expect(Object.hasOwn(node, 'constructor')).toBe(false)
+    expect(Object.hasOwn(node, 'prototype')).toBe(false)
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined() // no prototype pollution
+  })
+
+  it('cuts over-deep content inside custom nodes (shared maxDepth budget)', () => {
+    let deep: unknown = { leaf: true }
+    for (let i = 0; i < 30; i++) deep = { child: deep }
+    const spec = repairGenuiSpec({ items: [{ type: 'my-widget', payload: deep }] })
+    expect(spec?.items).toHaveLength(1)
+    let cur: unknown = (spec!.items[0] as Record<string, unknown>).payload
+    let depth = 0
+    while (cur !== null && typeof cur === 'object') {
+      cur = (cur as Record<string, unknown>).child
+      depth += 1
+    }
+    // The custom node itself sits at depth 0; its payload chain is cut so the
+    // deepest kept object is at maxDepth and everything below collapses to null.
+    expect(depth).toBe(GENUI_LIMITS.maxDepth)
+    expect(cur).toBeNull()
   })
 
   it('sanitizes raw scalars inside collections', () => {
