@@ -96,6 +96,16 @@ function FenceFallback({ raw, fenceKey }: { raw: string; fenceKey: Key }) {
  * effect — never inside the render function. StrictMode's duplicate effects
  * are absorbed by the operation map's per-source dedup, so the panel folds
  * and notifies exactly once per source. Renders nothing.
+ *
+ * The effect fires once per source identity, not once per render: the host
+ * re-invokes the fence renderer on every message-tree render (a fresh spec
+ * object each time) and a replayed operation is an idempotent no-op in the
+ * panel store anyway, so re-firing on `spec` identity only burned cycles.
+ * `spec` therefore rides a latest-value ref read at fire time, and the
+ * order tuple enters the deps as primitives — hosts rebuild the tuple array
+ * per render, so its identity is not stable even though its values are.
+ * A genuine content update always arrives under a NEW source (new message
+ * seq / call id), which remounts or re-fires the effect as before.
  */
 function FencePanelPublisher({ sessionId, sourceId, order, spec }: {
   sessionId: string
@@ -103,15 +113,18 @@ function FencePanelPublisher({ sessionId, sourceId, order, spec }: {
   order: readonly [number, number, number]
   spec: GenuiSpec
 }) {
+  const specRef = useRef(spec)
+  specRef.current = spec
   useEffect(() => {
+    const current = specRef.current
     const status: PanelOperationStatus = applyPanelOperation(sessionId, {
       sourceId,
       order,
-      mode: spec.append === true ? 'append' : 'replace',
-      spec,
+      mode: current.append === true ? 'append' : 'replace',
+      spec: current,
     })
     if (status === 'overflow') diagnosePanelBudget(sessionId, sourceId)
-  }, [sessionId, sourceId, order, spec])
+  }, [sessionId, sourceId, order[0], order[1], order[2]])
   return null
 }
 

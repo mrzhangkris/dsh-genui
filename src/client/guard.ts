@@ -325,21 +325,32 @@ const NODE_KEYS: Record<string, ReadonlySet<string>> = {
   echart: new Set(['title', 'height', 'preset', 'data', 'series', 'option']),
 }
 
-/** Walk `list` with the shared node budget; drops invalid entries. */
+/** Walk `list` with the shared node budget; drops invalid entries. Only
+ * KEPT entries consume the pool (dropped ones refund their charge), matching
+ * walkTree's skip-before-charge. */
 function repairItems(list: unknown, ctx: RepairCtx, depth: number, path: string): GenuiNode[] {
   if (!Array.isArray(list)) return []
   const out: GenuiNode[] = []
   for (let i = 0; i < list.length; i++) {
     if (ctx.remaining <= 0) break
-    ctx.remaining -= 1
     const itemPath = `${path}[${i}]`
     const declaredType = obj(list[i])?.type
+    // The charge PRECEDES repairNode on purpose: nested walks must see the
+    // decremented pool mid-repair, else a near-exhausted budget could admit
+    // a whole maxDepth chain before any decrement lands (the elide-tail and
+    // typed-list-children truncation tests pin this exact math). A node that
+    // fails repair is refunded below — like walkTree's nameless-entry skip,
+    // it never renders, so it must not consume the shared quota.
+    ctx.remaining -= 1
     const node = repairNode(list[i], ctx, depth, itemPath)
     if (node !== null) out.push(node)
-    else if (typeof declaredType === 'string' && NODE_KEYS[declaredType] !== undefined) {
-      // A DECLARED node failed repair (missing/invalid required fields): the
-      // whole node vanished — name it, so the drop is never silent.
-      ctx.diag?.push({ kind: 'dropped-node', path: itemPath, detail: `${itemPath}（type '${declaredType}'）因必填字段缺失或类型非法被整体丢弃` })
+    else {
+      ctx.remaining += 1
+      if (typeof declaredType === 'string' && NODE_KEYS[declaredType] !== undefined) {
+        // A DECLARED node failed repair (missing/invalid required fields): the
+        // whole node vanished — name it, so the drop is never silent.
+        ctx.diag?.push({ kind: 'dropped-node', path: itemPath, detail: `${itemPath}（type '${declaredType}'）因必填字段缺失或类型非法被整体丢弃` })
+      }
     }
   }
   return out
@@ -828,12 +839,18 @@ function repairListItems(
       // Typed children are GenuiNodes: charge them against the shared node
       // budget (module header promise — exhausted budget elides remaining
       // siblings). Strings and {title,desc} objects are list-item shapes,
-      // not nodes, so they never consume budget.
+      // not nodes, so they never consume budget. Same accounting as
+      // repairItems: charge before repairNode (nested walks must see the
+      // decremented pool mid-repair), refund a dropped child — only KEPT
+      // nodes spend the shared quota.
       if (ctx.remaining <= 0) break
       ctx.remaining -= 1
       const node = repairNode(o, ctx, depth, `${path}[${i - 1}]`)
       if (node !== null) out.push(node)
-      else ctx.diag?.push({ kind: 'dropped-node', path: `${path}[${i - 1}]`, detail: `${path}[${i - 1}]（type '${o.type}'）因必填字段缺失或类型非法被整体丢弃` })
+      else {
+        ctx.remaining += 1
+        ctx.diag?.push({ kind: 'dropped-node', path: `${path}[${i - 1}]`, detail: `${path}[${i - 1}]（type '${o.type}'）因必填字段缺失或类型非法被整体丢弃` })
+      }
     }
   }
   return out

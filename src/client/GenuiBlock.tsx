@@ -91,6 +91,26 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
   // submit collection — the input itself stays masked and its own action
   // still delivers the value on explicit user submit.
   const [secretFields, setSecretFields] = useState<ReadonlySet<string>>(new Set())
+  // Durable-state reset: stateKey embeds the content fingerprint, but the
+  // block is keyed structurally — an in-place content change re-renders the
+  // block WITHOUT remounting it, so the useState seeds above never re-run and
+  // the previous content's answers would leak into the new one. Watch the
+  // key: on a change, drop the stale interaction state and load the new
+  // key's saved state instead. The first mount already seeded from useState,
+  // so the ref keeps that initial pass a no-op. `round` bumps too so radios
+  // remount (their key carries the round) with clean selections — same
+  // mechanism as 重新作答 below.
+  const lastStateKey = useRef(stateKey)
+  useEffect(() => {
+    if (lastStateKey.current === stateKey) return
+    lastStateKey.current = stateKey
+    const fresh = stateKey === undefined ? null : loadBlockState(stateKey)
+    setAnswers(fresh?.answers ?? {})
+    setFields(fresh?.fields ?? {})
+    setMeta(fresh?.meta ?? {})
+    setLocked(fresh?.locked === true)
+    setRound(r => r + 1)
+  }, [stateKey])
   const setAnswer = useCallback((group: string, choice: string) => {
     setAnswers(prev => (prev[group] === choice ? prev : { ...prev, [group]: choice }))
   }, [])

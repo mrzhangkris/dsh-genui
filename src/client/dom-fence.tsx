@@ -22,10 +22,11 @@
  *   streams, no settled marker required. A body with no finished component
  *   yet stays a stock code block (partial JSON must never look broken).
  * - **Pre-paint surgery repair**: the host's React re-renders during
- *   streaming can wipe our foreign container or reset the hide. A repair
- *   pass in the MutationObserver microtask re-applies the surgery before
- *   paint (same pattern the annotation plugin proved on this host), and the
- *   1s sweep is the backstop.
+ *   streaming can wipe our foreign container or reset the hide. Mutation
+ *   batches are coalesced into ONE requestAnimationFrame pass that re-applies
+ *   the surgery and re-renders React state before that frame paints (rAF
+ *   callbacks run pre-paint, so raw JSON never flashes), and the 1s sweep is
+ *   the backstop.
  * - **Settled transition**: when `[data-streaming]` leaves the row, the
  *   mount re-renders with the stable source identity — the moment panels
  *   publish and durable state keys in (mirrors the registry channel's
@@ -288,11 +289,16 @@ function rowOf(block: Element): Element {
  * stable while the block itself is still streaming. When the fallback chain
  * bottoms out at the block itself (no owning row in the DOM at all), the
  * ordinal falls back to document order among ALL settled dsh-ui blocks so
- * sibling fences never collide on the same `dom:unknown:N` identity. */
-function fenceIndexOf(row: Element, block: Element): number {
-  const scope = row === block ? document : row
+ * sibling fences never collide on the same `dom:unknown:N` identity.
+ * `candidates` is the surface list of the lookup scope — the owning row, or
+ * the document when the row bottoms out at the block (the caller derives the
+ * scope) — precomputed through the per-install candidate cache, so repeated
+ * identity lookups within one structure generation share a single scan. The
+ * per-candidate gates (`STREAMING`, label) still run live: only the element
+ * LIST is cached. */
+function fenceIndexOf(block: Element, candidates: HTMLElement[]): number {
   let index = 0
-  for (const candidate of findFenceCandidates(scope)) {
+  for (const candidate of candidates) {
     if (candidate.closest(STREAMING) !== null) continue
     if (infostringOf(candidate) === null) continue
     index += 1
@@ -358,6 +364,38 @@ export function installDomFenceRenderer(
     }
   }
 
+  /** Candidate-surface cache (streaming hot path). Token streaming mutates
+   * text nodes, not structure, but `findFenceCandidates` walks the whole
+   * document with two `querySelectorAll` passes on every sweep, and
+   * `fenceIndexOf` re-scanned its scope once per re-rendered mount — the
+   * same lists recomputed dozens of times per second. Cache both per
+   * structure generation: the observer marks the generation dirty on any
+   * childList record (element insertions/removals are the only way a surface
+   * list can change), and the 1s belt-and-braces sweep invalidates
+   * unconditionally, so any candidacy drift a non-childList mutation could
+   * cause (a host editing surface classes or label text in place) still
+   * heals within the same 1s budget as before this cache existed. Per-install
+   * state: a fresh install starts with no cache and nothing can leak across
+   * installs. */
+  let docCandidates: HTMLElement[] | null = null
+  const rowCandidates = new Map<ParentNode, HTMLElement[]>()
+  function invalidateCandidateCaches(): void {
+    docCandidates = null
+    rowCandidates.clear()
+  }
+  function candidatesFor(scope: ParentNode): HTMLElement[] {
+    if (scope === document) {
+      if (docCandidates === null) docCandidates = findFenceCandidates(document)
+      return docCandidates
+    }
+    let list = rowCandidates.get(scope)
+    if (list === undefined) {
+      list = findFenceCandidates(scope)
+      rowCandidates.set(scope, list)
+    }
+    return list
+  }
+
   /** Render context for a block: session always; the stable source identity
    * only once settled — streaming renders are identity-less (no panel
    * publish, no durable state), mirroring the registry channel. */
@@ -369,7 +407,7 @@ export function installDomFenceRenderer(
       // per block so the degraded path is visible in the console.
       warnOnce(block, 'no [data-chat-anchor-key] ancestor for a dsh-ui fence (host render path without row anchor — e.g. Safari); using fallback identity dom:unknown:N')
     }
-    const fenceIndex = fenceIndexOf(row, block)
+    const fenceIndex = fenceIndexOf(block, candidatesFor(row === block ? document : row))
     const anchorKey = row.getAttribute('data-chat-anchor-key') ?? 'unknown'
     const key = `dom:${anchorKey}:${fenceIndex}` as Key
     const sessionId = sessionIdOf()
@@ -463,9 +501,11 @@ export function installDomFenceRenderer(
   }
 
   /** Pre-paint repair: the host's React re-renders during streaming can wipe
-   * our foreign container or reset the hide. Re-apply the surgery in the
-   * observer microtask (before paint) so raw JSON never flashes between
-   * chunks; the rAF sweep re-renders React state at its own pace. */
+   * our foreign container or reset the hide. Runs from the coalesced rAF
+   * sweep — rAF callbacks execute before that frame paints, so the surgery
+   * is re-applied before anything can flash (this used to run per mutation
+   * batch in the observer microtask, making every streamed token pay a full
+   * mount walk; the sweep already re-ran it, so that was duplicate work). */
   function repairSurgery(): void {
     for (const mount of Array.from(mounts.values())) {
       const block = mount.block
@@ -595,7 +635,7 @@ export function installDomFenceRenderer(
       }
     }
     repairSurgery()
-    for (const block of findFenceCandidates()) {
+    for (const block of candidatesFor(document)) {
       renderBlock(block)
     }
   }
@@ -610,10 +650,20 @@ export function installDomFenceRenderer(
     })
   }
 
-  const observer = new MutationObserver(() => {
-    // Pre-paint pass: surgery repair only (cheap DOM ops); the React
-    // re-render goes through the rAF-scheduled sweep.
-    repairSurgery()
+  const observer = new MutationObserver((records) => {
+    // ChildList records are the only ones that can change fence candidacy
+    // (element structure); text growth and data-streaming flips re-render
+    // through the sweep's live per-mount checks without rescanning the
+    // document. Everything else — including the surgery repair — is
+    // coalesced into the single rAF pass below: running repairSurgery here
+    // per batch made every streamed token pay a full mount walk in a
+    // microtask, and the rAF sweep re-ran the same walk anyway.
+    for (const record of records) {
+      if (record.type === 'childList') {
+        invalidateCandidateCaches()
+        break
+      }
+    }
     schedule()
   })
   observer.observe(document.body, {
@@ -629,7 +679,14 @@ export function installDomFenceRenderer(
   // pure waste, and hidden tabs throttle rAF to zero anyway, so the
   // observer-scheduled sweeps would pile up without ever painting.
   const interval = window.setInterval(() => {
-    if (!document.hidden) sweep()
+    if (!document.hidden) {
+      // Belt-and-braces for the candidate cache: re-verify structure
+      // unconditionally so candidacy drift that no childList record
+      // announced (a host editing surface classes or label text in place)
+      // still heals within the same 1s budget as before the cache existed.
+      invalidateCandidateCaches()
+      sweep()
+    }
   }, SWEEP_MS)
   sweep()
 
