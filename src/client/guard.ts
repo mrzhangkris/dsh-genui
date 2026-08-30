@@ -611,7 +611,11 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
       // would produce invalid JSON.
       if (!('value' in v) && !('data' in v)) return null
       if (!('value' in v) && 'data' in v) renamed(ctx, path, 'data', 'value')
-      const raw = v.value ?? v.data
+      // An explicit `value: null` is a legitimate JSON scalar (renders the
+      // string "null"); `??` swallowed it into `data`/undefined and the node
+      // rendered "undefined" instead — key PRESENCE picks the alias, not
+      // nullish-ness.
+      const raw = 'value' in v ? v.value : v.data
       let serialized: string
       try {
         serialized = JSON.stringify(raw) ?? ''

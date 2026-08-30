@@ -121,10 +121,18 @@ const STORAGE_KEY = 'dsh.genui.panel'
  * anything evicted). */
 const MAX_PERSISTED_SESSIONS = 50
 
-/** What survives a page reload: the folded snapshot, the local /panel
- * override, and the barriers that keep old replays from resurrecting either. */
+/** What survives a page reload: the folded snapshot, the kept operation
+ * sequence, the local /panel override, and the barriers that keep old
+ * replays from resurrecting either. The kept ops are the fold BASE:
+ * persisting only the snapshot meant a post-reload append folded over an
+ * EMPTY op set (base = local/null) and wiped the restored panel — every
+ * refresh lost the append base. */
 interface PersistedPanel {
   snapshot: GenuiSpec | null
+  /** Kept ops of the last committed fold (latest replace + accepted
+   * appends); optional only for legacy entries written before ops were
+   * persisted. */
+  ops?: PanelOperation[]
   local: GenuiSpec | null
   localBarrier: number
   maxSeenSeq: number
@@ -174,11 +182,24 @@ function writePanelStorage(sessionId: string, entry: PersistedPanel): void {
   }
 }
 
+/** Shape check for one persisted op (storage is untrusted JSON: skip
+ * malformed entries instead of poisoning the fold). */
+function isPersistedOp(v: unknown): v is PanelOperation {
+  if (typeof v !== 'object' || v === null) return false
+  const op = v as Record<string, unknown>
+  return typeof op.sourceId === 'string'
+    && Array.isArray(op.order) && op.order.length === 3 && op.order.every(n => typeof n === 'number')
+    && (op.mode === 'replace' || op.mode === 'append')
+    && typeof op.spec === 'object' && op.spec !== null
+}
+
 /** Lazy session state: hydrate from localStorage once per session when the
  * in-memory record is absent (first access after a reload). The persisted
- * snapshot + barriers restore the panel instantly; replays at/below the
- * persisted maxSeenSeq are dead, so history scrolling can never resurrect or
- * duplicate content. */
+ * snapshot + barriers restore the panel instantly; the persisted op
+ * sequence restores the fold BASE so a post-reload append merges into the
+ * restored panel instead of replacing it; replays at/below the persisted
+ * maxSeenSeq are dead, so history scrolling can never resurrect or duplicate
+ * content. */
 function stateOf(sessionId: string): SessionPanelState {
   const existing = sessions.get(sessionId)
   if (existing !== undefined) return existing
@@ -186,8 +207,9 @@ function stateOf(sessionId: string): SessionPanelState {
   try {
     const stored = readPanelStorage().sessions[sessionId]
     if (stored !== undefined) {
+      const restoredOps = (Array.isArray(stored.ops) ? stored.ops : []).filter(isPersistedOp)
       state = {
-        ops: new Map(),
+        ops: new Map(restoredOps.map(op => [op.sourceId, op])),
         seen: new Map(),
         overflow: null,
         local: stored.local ?? null,
@@ -231,10 +253,14 @@ function fold(state: SessionPanelState, extra: PanelOperation | null): FoldResul
       return null
     }
   }
-  // Only live ops (strictly after both barriers) participate. An EDIT
-  // (same source, changed content) supersedes that source's earlier op in
-  // the ops map, so every source folds exactly once — no double-appends.
-  const ops = [...state.ops.values()].filter(op => op.order[0] > state.localBarrier && op.order[0] > state.replayBarrier && (extra === null || op.sourceId !== extra.sourceId))
+  // Only ops strictly after the LOCAL barrier participate (a local /panel
+  // override superseded everything at/below it). The REPLAY barrier gates
+  // only INCOMING candidates (checked above): ops restored from persisted
+  // storage legitimately sit at/below it — they ARE the fold base — so the
+  // map is never filtered by it (live sessions keep it at -1 forever). An
+  // EDIT (same source, changed content) supersedes that source's earlier op
+  // in the ops map, so every source folds exactly once — no double-appends.
+  const ops = [...state.ops.values()].filter(op => op.order[0] > state.localBarrier && (extra === null || op.sourceId !== extra.sourceId))
   if (extra !== null) ops.push(extra)
   ops.sort((a, b) => compareOrder(a.order, b.order))
   // The latest VALID replace resets everything before it; start the fold
@@ -309,6 +335,9 @@ function commit(state: SessionPanelState, result: FoldResult, sessionId: string)
   if (result.overflow !== null) state.seen.set(result.overflow.sourceId, opIdentity(result.overflow))
   writePanelStorage(sessionId, {
     snapshot: state.snapshot,
+    // The kept op sequence rides along: it is the fold base a post-reload
+    // append merges into (the snapshot alone cannot rebuild it).
+    ops: [...result.kept],
     local: state.local,
     localBarrier: state.localBarrier,
     maxSeenSeq: state.maxSeenSeq,

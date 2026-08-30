@@ -403,6 +403,30 @@ describe('panel operation model (real order, no Infinity)', () => {
     expect(getPanelSpec('s1')!.items).toEqual([text('新')])
   })
 
+  it('keeps the pre-reload append base: a post-reload append merges into the restored ops', () => {
+    // Regression: persistence stored only the folded snapshot. After a
+    // reload a NEW append folded over an empty op set (base = local/null) and
+    // wiped the restored panel — every refresh lost the append base.
+    applyPanelOperation('s1', { sourceId: 'r:1', order: [1, 0, 0], mode: 'replace', spec: { title: 'T', items: [text('基底')] } })
+    expect(applyPanelOperation('s1', { sourceId: 'a:2', order: [2, 0, 0], mode: 'append', spec: { items: [text('追加')] } })).toBe('accepted')
+    expect(getPanelSpec('s1')!.items).toEqual([text('基底'), text('追加')])
+    clearSessionPanel('s1') // reload: memory teardown, storage survives
+    // the restored snapshot still carries the appended content…
+    expect(getPanelSpec('s1')!.items).toEqual([text('基底'), text('追加')])
+    // …and a NEW append folds on the restored replace+append op sequence
+    // instead of wiping it (this was the lost-base bug).
+    const status = applyPanelOperation('s1', { sourceId: 'a:3', order: [3, 0, 0], mode: 'append', spec: { items: [text('新追加')] } })
+    expect(status).toBe('accepted')
+    expect(getPanelSpec('s1')!.items).toEqual([text('基底'), text('追加'), text('新追加')])
+    // old history replays stay dead after hydration (replay barrier intact)
+    const replay = applyPanelOperation('s1', { sourceId: 'a:2:replay', order: [2, 1, 0], mode: 'append', spec: { items: [text('重放')] } })
+    expect(replay).toBe('blocked')
+    expect(getPanelSpec('s1')!.items).toEqual([text('基底'), text('追加'), text('新追加')])
+    // a later replace still resets the whole restored sequence
+    applyPanelOperation('s1', { sourceId: 'r:10', order: [10, 0, 0], mode: 'replace', spec: { items: [text('重置')] } })
+    expect(getPanelSpec('s1')!.items).toEqual([text('重置')])
+  })
+
   it('warns once per source when a barrier rejects an op (issue #4 diagnostics)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {

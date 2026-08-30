@@ -627,6 +627,20 @@ describe('repairGenuiSpec: json value size budget', () => {
     expect(spec?.items[0]).toEqual({ type: 'json', value: { a: 1, b: ['x', 'y'] } })
   })
 
+  it('keeps an explicit value: null (a legit JSON scalar, not blank/undefined)', () => {
+    // Regression: `v.value ?? v.data` swallowed an explicit null into
+    // undefined and the fence rendered "undefined" instead of "null".
+    const spec = repairGenuiSpec({ items: [{ type: 'json', value: null }] })
+    const node = spec?.items[0] as { type: string; value?: unknown } | undefined
+    expect(node).toEqual({ type: 'json', value: null })
+    expect(node !== undefined && 'value' in node && node.value === null).toBe(true)
+  })
+
+  it('keeps an explicit data: null through the data→value rename', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'json', data: null }] })
+    expect(spec?.items[0]).toEqual({ type: 'json', value: null })
+  })
+
   it('drops the node when the serialized value exceeds maxJsonValue', () => {
     // One huge string payload: pre-fix this passed through unbounded and
     // JsonNode would re-stringify it on every render.

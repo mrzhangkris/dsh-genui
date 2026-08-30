@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { hasFenceRegistry } from './setup'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { renderGenuiFence } from '../src/client/index.tsx'
 
 afterEach(cleanup)
 
@@ -191,5 +192,23 @@ describe('GenUI chart skeleton (design system v2)', () => {
     expect(svg?.querySelectorAll('[class*="lineGridAxis"]')).toHaveLength(1)
     expect(svg?.querySelectorAll('[class*="lineTick"]')).toHaveLength(4)
     expect(svg?.querySelectorAll('[class*="linePath"]')).toHaveLength(1)
+  })
+})
+
+describe('json node scalar rendering (explicit null)', () => {
+  it('renders an explicit JSON null as the literal string "null" through the fence pipeline', () => {
+    // `value: null` is a legitimate JSON value; the repair layer used to
+    // swallow it into undefined (via `??`) and the fence rendered
+    // "undefined" instead of the scalar "null".
+    const el = renderGenuiFence(
+      JSON.stringify({ items: [{ type: 'json', value: null }] }),
+      'json-null',
+      {
+        sessionId: 'genui-json-null',
+        source: { id: '["assistant",1,0,0]', order: [1, 0, 0] },
+      },
+    ) as never
+    const { container } = render(el)
+    expect(container.textContent).toBe('null')
   })
 })
