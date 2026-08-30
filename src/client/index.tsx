@@ -34,6 +34,7 @@ import { GenuiPanel, type GenuiPanelInjected } from './panel.tsx'
 import { GenuiToolView } from './toolview.tsx'
 import type { InputTriggerServiceContract } from '@deepseek-ai/dsh-client-ui-input-trigger/client'
 import { assetUrl } from './asset-loader.ts'
+import { redactJsonErrorSnippet } from '../shared/fence-repair.ts'
 
 /** Host extension surface the registry channel needs (absent on pristine). */
 type HostFenceExt = {
@@ -103,6 +104,32 @@ function sendPanelInstruction(ctx: Context, sessionId: SessionId, instruction: s
 }
 
 /**
+ * P1 observation loop — fence-failure relay: when a settled ```dsh-ui body
+ * fails to parse and no repair can save it, tell the model through the same
+ * scoped conversation send the [genui-action] channel uses, so the author
+ * knows the fence degraded to a code block (with the parse position) and
+ * avoids the error class next time. The diagnostic is the JSON.parse error
+ * text only — never the fence body (it may carry field content): V8's token
+ * errors embed a 20–30 character quoted excerpt of the BODY, so the template
+ * runs the diagnostic through {@link redactJsonErrorSnippet} and keeps only
+ * the position and error type. The send is fire-and-forget: a failed prompt
+ * drops the report; the red banner in FenceFallback remains the user-facing
+ * signal either way.
+ */
+export function fenceFailureReportMessage(diagnostic: string): string {
+  return `[genui-action] fence-parse-failure。你上一条回复中的 dsh-ui 围栏 JSON 解析失败（${redactJsonErrorSnippet(diagnostic)}），界面未能渲染，已降级为代码块并向用户展示红横幅。请检查该围栏 JSON 的语法（括号配对、引号转义、逗号），修复后重新输出完整围栏；若难以修复，请改用更简单的组件（如 text/list）或普通多行文本表达，不要原样重发失败的 JSON。`
+}
+
+function sendFenceFailureReport(ctx: Context, sessionId: SessionId, diagnostic: string): void {
+  const scoped = ctx.sessions.scope(sessionId)
+  const conversation = scoped?.get('conversation') as IConversation | undefined
+  if (conversation === undefined) return
+  void conversation.send(fenceFailureReportMessage(diagnostic)).catch((err: unknown) => {
+    console.warn(`[genui] 围栏失败回传发送失败（session ${sessionId}）：`, err instanceof Error ? err.message : String(err))
+  })
+}
+
+/**
  * Inline-fence action relay (DOM channel): the same message template the
  * contract host's sendGenuiAction uses, so the model sees one identical
  * [genui-action] contract on both channels.
@@ -131,7 +158,15 @@ export function apply(ctx: Context): () => void {
   const channel = typeof registerFn === 'function' ? 'registry' : 'dom'
   console.info(`[genui] client active; fence-channel=${channel}`)
   const disposers: Array<() => void> = typeof registerFn === 'function'
-    ? [registerFn('dsh-ui', renderGenuiFence)]
+    ? [registerFn('dsh-ui', (raw, key, context) => renderGenuiFence(raw, key, context, (failure) => {
+        // P1 observation loop: FenceFallback fires this at most once per
+        // failed fence identity (its own dedup); the wrapper only resolves
+        // the channel. No session route → nothing to relay.
+        // The fence context carries the session route as a plain string
+        // (host-independent data shape); the scoped lookup below needs the
+        // branded id — same boundary cast the DOM channel applies.
+        if (failure.sessionId !== undefined) sendFenceFailureReport(ctx, failure.sessionId as SessionId, failure.diagnostic)
+      }))]
     : [installDomFenceRenderer(ctx, (sessionId, action, payload) => sendInlineGenuiAction(ctx, sessionId, action, payload))]
   // Idle prefetch of the lazy engine assets: the browser downloads them at
   // LOW priority whenever the page is idle, so the first mermaid/3D node in

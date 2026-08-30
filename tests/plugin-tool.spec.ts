@@ -323,4 +323,22 @@ describe('validate_dsh_ui tool', () => {
     expect(verdict.diagnostics).toHaveLength(1)
     expect(verdict.diagnostics![0]!.kind).toBe('renamed')
   })
+
+  it('flags a truncated repair so partial content is not shipped silently (P3)', async () => {
+    // The orphan member cannot merge back ("k":1 intervened): the full
+    // repair cannot parse, so completeFenceJson degrades to the truncated
+    // prefix. The verdict must TELL the model content was dropped instead
+    // of handing over the prefix as if it were the whole fence.
+    const truncated = '{"type":"table","columns":["a"],"rows":[["留一"],["留二"]],"k":1,["尾巴"'
+    const verdict = await verdictOf({ spec: truncated })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.message).toContain('已自动修复')
+    expect(verdict.message).toContain('截断降级')
+    expect(verdict.message).toContain('部分内容因格式错误被丢弃')
+    // The handed-back JSON is the (parseable) truncated prefix.
+    const match = /```\n([\s\S]*)\n``$/.exec(verdict.message)
+    expect(match).not.toBeNull()
+    expect(() => JSON.parse(match![1]!)).not.toThrow()
+    expect(match![1]!).not.toContain('尾巴')
+  })
 })

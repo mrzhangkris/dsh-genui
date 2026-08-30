@@ -153,7 +153,7 @@ Field table — one line per type, canonical names ONLY (missing required → no
 
 Rules:
 - 触发: 结构化表达优于纯文本时主动用（要点、强调、对比、流程、步骤、状态、数据、演示），纯问答与一句话不套 UI；一个主题一个主组件，每次 3–8 个组件，同一数据不重复出现。
-- JSON 严格: 坏围栏降级为代码块；含表格/图表/嵌套容器（row/col/grid/card/tabs/accordion）任一层级 或 节点数≥2 的围栏发出前调用 validate_dsh_ui，❌ 修好再发（若附「已自动修复」JSON 照抄即可）。
+- JSON 严格: 坏围栏降级为代码块；含图表/嵌套容器（row/col/grid/card/tabs/accordion）任一层级 或 节点数≥2 的围栏发出前调用 validate_dsh_ui，❌ 修好再发（若附「已自动修复」JSON 照抄即可）；table 的 rows≥5 行同样必须先验证，验证失败且无法自动修复时拆成 ≤5 行小表或多个 list/keyvalue 卡片替代，禁止重发同形态大表。
 - 键名纪律: 节点的键只取自字段表，多余或拼错的可选字段名会被渲染器无声丢弃、不给任何警告；写完逐键比对字段表。
 - 规模: ≤200 节点、嵌套≤8 层（超出被截断）；3D mesh 1–5；plot 给合理 xMin/xMax。
 - LOCAL-FIRST + actions: UI 能自己做的状态变化（判卷、判题、重置、展开、选中）就地完成，零往返；action 只用于必须模型参与的事。交互组件带 "action":"name"，交互以 [genui-action] name + 组件数据回传，届时重渲染更新 UI；无 action 的按钮禁用。

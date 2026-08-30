@@ -367,10 +367,16 @@ export function createValidateDshUiTool(): ToolDefinition {
           const repairedDiag: GenuiRepairDiagnostic[] = []
           if (repairGenuiSpec(JSON.parse(repaired.text) as unknown, repairedDiag) !== null) {
             const renamedCount = repairedDiag.filter(d => d.kind === 'renamed').length
+            // P3: a truncated degradation silently DROPPED the orphan tail —
+            // the repaired text is only the surviving prefix. Say so, or the
+            // model ships a partial UI believing it is the whole fence.
+            const truncatedWarn = repaired.truncated === true
+              ? '（截断降级：部分内容因格式错误被丢弃，下面只是可用前缀，发出前请核对是否缺内容）'
+              : ''
             const warn = renamedCount > 0 ? `  ⚠️ 修复后的 JSON 仍含 ${renamedCount} 处别名键：能用但请改用正名。\n` : ''
             return {
               ok: false,
-              message: `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  已自动修复 ${repaired.repairs} 处，下面是修复后的 JSON，直接作为围栏正文发出即可（无需再验证）：\n${warn}\`\`\`\n${repaired.text}\n\`\``,
+              message: `❌ dsh-ui 围栏 JSON 解析失败：${detail}。\n${bracketDiagnostic(raw)}  已自动修复 ${repaired.repairs} 处${truncatedWarn}，下面是修复后的 JSON，直接作为围栏正文发出即可（无需再验证）：\n${warn}\`\`\`\n${repaired.text}\n\`\``,
               ...(repairedDiag.length > 0 ? { diagnostics: toDiagnostics(repairedDiag) } : {}),
             }
           }

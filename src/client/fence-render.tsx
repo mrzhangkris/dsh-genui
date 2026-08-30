@@ -41,6 +41,78 @@ export interface GenuiFenceContext {
   readonly source?: GenuiFenceSource
 }
 
+/** Observation-loop payload for a SETTLED, unrepairable fence body: the
+ * owning session route (absent outside a session-scoped render — nothing to
+ * relay then), the stable source identity when the host provided one, and
+ * the human-readable parse failure (position + reason; never fence content). */
+export interface GenuiFenceFailure {
+  readonly sessionId: string | undefined
+  readonly sourceId: string | undefined
+  readonly diagnostic: string
+}
+
+/** Reporter seam: the client entry wires this to the scoped conversation
+ * send so the model learns its fence never rendered (P1 observation loop).
+ * Fired AT MOST ONCE per failed fence identity — see the dedup set below. */
+export type GenuiFenceFailureReporter = (failure: GenuiFenceFailure) => void
+
+/** localStorage key + size cap for the persisted dedup set (P1). */
+const FENCE_FAILURE_DEDUP_KEY = 'dsh-genui:fence-failure-dedup:v1'
+const FENCE_FAILURE_DEDUP_CAP = 400
+
+/**
+ * Already-reported fence failures (dedup), PERSISTED across page loads. A
+ * fence re-renders on every message-tree pass and remounts on branch
+ * switches, but the model must hear about one failure exactly once — the
+ * reporter fires only when this set does not yet hold the key. Keyed by
+ * session + source + diagnostic: a re-issued fence (fixed, later broken
+ * again) always arrives under a NEW source identity and reports
+ * independently; without a stable source the body length degrades into the
+ * identity so distinct source-less failures stay distinct.
+ *
+ * Persistence: an in-memory set alone cleared on every refresh, so HISTORICAL
+ * bad fences re-reported on each reload after remount — spamming the model
+ * with the same dead failure N times. The dedup keys therefore ride
+ * localStorage (stable across refreshes AND plugin reloads); every access is
+ * guarded because storage can be blocked (sandboxed iframe, quota) — on any
+ * failure the set degrades gracefully to the old session-only behavior.
+ * Bounded by {@link FENCE_FAILURE_DEDUP_CAP}: oldest keys evict first (Set
+ * preserves insertion order), so the store never grows unbounded.
+ */
+function loadReportedFenceFailures(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FENCE_FAILURE_DEDUP_KEY)
+    if (raw === null) return new Set()
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set()
+    const keys = parsed.filter((k): k is string => typeof k === 'string')
+    return new Set(keys.slice(-FENCE_FAILURE_DEDUP_CAP))
+  } catch {
+    // Blocked/unavailable storage or a corrupt payload — dedup this page
+    // load only (the pre-persistence behavior).
+    return new Set()
+  }
+}
+
+const reportedFenceFailures = loadReportedFenceFailures()
+
+/** Record a reported failure in the set AND in localStorage, evicting the
+ * oldest keys past the cap. A failed write never breaks the report itself:
+ * the in-memory set still dedups everything this page load. */
+function persistReportedFenceFailure(key: string): void {
+  reportedFenceFailures.add(key)
+  while (reportedFenceFailures.size > FENCE_FAILURE_DEDUP_CAP) {
+    const oldest = reportedFenceFailures.values().next().value
+    if (oldest === undefined) break
+    reportedFenceFailures.delete(oldest)
+  }
+  try {
+    localStorage.setItem(FENCE_FAILURE_DEDUP_KEY, JSON.stringify([...reportedFenceFailures]))
+  } catch {
+    // Storage unavailable — in-memory dedup above still covers this load.
+  }
+}
+
 const FENCE_ERROR_STYLE: CSSProperties = {
   margin: '0 0 6px',
   padding: '6px 10px',
@@ -68,9 +140,17 @@ const FENCE_ERROR_STYLE: CSSProperties = {
  *    fail silently: the fence degraded to a code block with no hint, and the
  *    author had no way to know the UI never rendered. Once the streaming
  *    marker is gone, surface a compact diagnostic with the parse position so
- *    the defect is visible instead of silent.
+ *    the defect is visible instead of silent — and, when a reporter is wired,
+ *    relay the same failure back to the model exactly once (P1 observation
+ *    loop): the author learns what went wrong and avoids the class of error,
+ *    instead of the defect dying in the user's browser.
  */
-function FenceFallback({ raw, fenceKey }: { raw: string; fenceKey: Key }) {
+function FenceFallback({ raw, fenceKey, context, reportFailure }: {
+  raw: string
+  fenceKey: Key
+  context: GenuiFenceContext | undefined
+  reportFailure: GenuiFenceFailureReporter | undefined
+}) {
   const ref = useRef<HTMLDivElement | null>(null)
   const [settled, setSettled] = useState(false)
   useLayoutEffect(() => {
@@ -78,6 +158,23 @@ function FenceFallback({ raw, fenceKey }: { raw: string; fenceKey: Key }) {
     if (node !== null && node.closest('[data-streaming]') === null) setSettled(true)
   })
   const diagnostic = settled && raw.trim() !== '' ? describeJsonFailure(raw) : null
+  // Failure report (P1): fire only when the defect is certain (settled +
+  // parse failure), a reporter is wired, and a session route exists (no
+  // session → no conversation.send channel → nothing to relay). The
+  // module-level set dedups across re-renders AND remounts (branch switches,
+  // message-tree passes), so one failure reaches the model exactly once; a
+  // failed send is dropped like every fire-and-forget action here. The effect
+  // runs post-paint and never gates the banner above — the UI is unaffected.
+  const sessionId = context?.sessionId
+  const sourceId = context?.source?.id
+  const rawLength = raw.length
+  useEffect(() => {
+    if (diagnostic === null || reportFailure === undefined || sessionId === undefined) return
+    const dedupKey = sessionId + '|' + (sourceId ?? 'raw:' + rawLength) + '|' + diagnostic
+    if (reportedFenceFailures.has(dedupKey)) return
+    persistReportedFenceFailure(dedupKey)
+    reportFailure({ sessionId, sourceId, diagnostic })
+  }, [diagnostic, reportFailure, sessionId, sourceId, rawLength])
   return (
     <div ref={ref}>
       {diagnostic !== null && (
@@ -186,6 +283,13 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
         const reparsed = parsePartialGenuiSpec(completed.text)
         spec = reparsed === null ? null : repairGenuiSpec(reparsed)
         if (reparsed !== null && settled) warnings = validate(reparsed)
+        // P3 visibility: a truncated degradation DROPPED content — the
+        // rendered UI is only the repaired prefix, and that loss used to be
+        // silent. Surface it in the amber bar so the author knows to check
+        // for missing pieces instead of trusting the partial UI.
+        if (spec !== null && completed.truncated === true) {
+          warnings = [...warnings, '部分内容因格式错误被丢弃（渲染的是修复后保留的前缀，请检查是否缺内容）']
+        }
       }
     }
   }
@@ -279,10 +383,16 @@ export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFe
  * but an unrepairable body renders the fallback code block + settled
  * diagnostic — the host replaced its own block with our output — and an
  * unpublishable `panel:true` fence renders `null` (nothing in the flow).
+ *
+ * `reportFailure` (optional) closes the observation loop on settled,
+ * unrepairable bodies: the client entry passes a reporter that relays the
+ * parse failure to the model through the same scoped conversation send the
+ * [genui-action] channel uses. Optional so host/test callers that register
+ * the renderer with the plain three-argument contract keep working.
  */
-export function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext): ReactNode {
+export function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext, reportFailure?: GenuiFenceFailureReporter): ReactNode {
   const { spec, warnings } = resolveGenuiSpecDetailed(raw, context)
-  if (spec === null) return <FenceFallback key={key} fenceKey={key} raw={raw} />
+  if (spec === null) return <FenceFallback key={key} fenceKey={key} raw={raw} context={context} reportFailure={reportFailure} />
   if (spec.panel === true) {
     if (context !== undefined && context.sessionId !== undefined && context.source !== undefined) {
       if (spec.append === true && !isCompleteJson(raw)) return null

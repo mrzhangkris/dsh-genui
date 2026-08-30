@@ -22,6 +22,19 @@ export declare function isCompleteJson(raw: string): boolean;
  * null when it parses. Positions come from the host's JSON.parse error. */
 export declare function describeJsonFailure(raw: string): string | null;
 /**
+ * Strip the embedded body snippet from a JSON.parse diagnostic before it
+ * rides a message into the CONVERSATION (the P1 fence-failure relay). V8's
+ * token errors append a 20–30 character quoted excerpt of the fence body —
+ * `Unexpected token '模', "…正文片段…" is not valid JSON` — and that excerpt
+ * is fence content, which may carry field text the report must not echo.
+ * Keep only the position and the error type: cut at the first double quote
+ * (the snippet's opening delimiter — the type part before it only ever uses
+ * single quotes) and drop the trailing separator. Messages without a quoted
+ * snippet (older V8 shapes, "Unexpected end of JSON input", …) pass through
+ * unchanged.
+ */
+export declare function redactJsonErrorSnippet(diagnostic: string): string;
+/**
  * Tier-1 repair — SAFE AT ANY TIME (streaming included): heals the most
  * common model JSON typos that do NOT change the body's structure, and only
  * when the whole body parses afterwards (so a still-growing streaming half
@@ -67,12 +80,31 @@ export declare function repairFenceJson(raw: string): {
  * object context, where only `"key":` pairs are legal). When the scan sees a
  * `,` directly (modulo whitespace) after a just-closed value array and the
  * next non-space char is `[` or `{`, it deletes that closer to reopen the
- * array so the orphan becomes its next element. A value OBJECT closed early
- * is deliberately NOT healed: deleting its `}` leaves the orphan's own
- * `{...}` shell as a bare literal inside the object (`{"a":1,{"b":2}}`),
- * which is still invalid — no single deletion can make it parse.
+ * array so the orphan becomes its next element. The same merge also fires for
+ * a BARE bracket orphan — the author dropped the comma entirely
+ * (`"rows":[[a],[b]] ["c","d"]`): at object member position (stack top `}`
+ * and expecting a key) a bracket literal is never legal, so the scan
+ * backtracks to the nearest just-closed key-value array, replaces its closer
+ * with the missing `,` and merges the orphan in as the next element. A value
+ * OBJECT closed early is deliberately NOT healed: deleting its `}` leaves
+ * the orphan's own `{...}` shell as a bare literal inside the object
+ * (`{"a":1,{"b":2}}`), which is still invalid — no single deletion can make
+ * it parse.
+ *
+ * Truncated degradation: when the scan DID repair something but the completed
+ * body still does not parse (damage no heal can fix), the repairer does not
+ * give up. Every orphan/merge point in an object member list records a
+ * truncation candidate — the prefix emitted before it plus the closers open
+ * at that moment. The fallback drops the orphan tail and keeps the longest
+ * repaired prefix that parses as whole JSON on its own (never an empty
+ * `{}`/`[]` shell): partial UI beats a diagnostic banner. The result then
+ * carries `truncated: true` so callers can surface that content was DROPPED
+ * instead of rendering the degraded prefix as if nothing was lost. Bodies
+ * where the scan repaired nothing, or that carry no orphan truncation point,
+ * still fail honestly with null.
  */
 export declare function completeFenceJson(raw: string): {
     text: string;
     repairs: number;
+    truncated?: boolean;
 } | null;

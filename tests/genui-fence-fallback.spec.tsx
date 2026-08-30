@@ -6,8 +6,8 @@
 // diagnostic (role=alert) with the parse position, keeping the raw code
 // block below so no content is lost.
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
-import { renderGenuiFence } from '../src/client/index.tsx'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { fenceFailureReportMessage, renderGenuiFence } from '../src/client/index.tsx'
 
 afterEach(cleanup)
 
@@ -260,5 +260,178 @@ describe('automatic quote-escape repair', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     expect(document.body.textContent).toContain('没闭合')
     expect(screen.queryByRole('note')).toBeNull()
+  })
+})
+
+describe('P1 observation loop: report unrepairable fences back to the model', () => {
+  // A body NO repair tier can save even with a settled source context:
+  // single-quoted strings. JSON.parse rejects the quote STYLE itself, tier-1
+  // only escapes stray double quotes inside values, tier-2 only appends or
+  // skips closers, and the partial parser recovers nothing — the exact
+  // production shape of a fence that degrades to the code block WITH the red
+  // banner. (Contrast BROKEN above: with a source context tier-2 completes
+  // it and it never reaches the fallback.)
+  const UNREPAIRABLE = '{"title":\'演示\',"items":[{"type":"text","content":"好"}]}'
+
+  it('fires the reporter exactly once for a settled failure (re-render + remount)', () => {
+    const reporter = vi.fn()
+    const ctx = { sessionId: 'p1-a', source: { id: 'p1-a-f1', order: [1, 0, 0] } }
+    const { rerender } = render(<div>{renderGenuiFence(UNREPAIRABLE, 'p1', ctx, reporter)}</div>)
+    // Fired once, carrying the session route, the stable source identity and
+    // the human-readable parse failure (position + reason, no fence content).
+    expect(reporter).toHaveBeenCalledTimes(1)
+    const failure = reporter.mock.calls[0]![0] as { sessionId: string; sourceId: string; diagnostic: string }
+    expect(failure.sessionId).toBe('p1-a')
+    expect(failure.sourceId).toBe('p1-a-f1')
+    expect(failure.diagnostic.length).toBeGreaterThan(0)
+    // The host re-invokes the fence renderer on every message-tree pass: a
+    // same-identity re-render must NOT re-fire (module-level dedup).
+    rerender(<div>{renderGenuiFence(UNREPAIRABLE, 'p1', ctx, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(1)
+    // Nor may a remount (branch switch away and back): one failure, one
+    // report — the model must not be spammed.
+    cleanup()
+    render(<div>{renderGenuiFence(UNREPAIRABLE, 'p1', ctx, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(1)
+    // The background report never replaces the user-facing signal: the red
+    // banner renders regardless of the loop.
+    expect(screen.getByRole('alert').textContent).toContain('解析失败')
+    expect(document.body.textContent).toContain('演示')
+  })
+
+  it('does not report while streaming; fires once at the settle transition', () => {
+    const reporter = vi.fn()
+    const ctx = { sessionId: 'p1-b', source: { id: 'p1-b-f1', order: [2, 0, 0] } }
+    const { rerender } = render(<div data-streaming="true">{renderGenuiFence(UNREPAIRABLE, 'p2', ctx, reporter)}</div>)
+    expect(reporter).not.toHaveBeenCalled()
+    rerender(<div>{renderGenuiFence(UNREPAIRABLE, 'p2', ctx, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(1)
+  })
+
+  it('never reports for bodies that parse or repair cleanly', () => {
+    const reporter = vi.fn()
+    // Valid body → real UI, no fallback, no report.
+    render(<div>{renderGenuiFence('{"title":"好","items":[{"type":"text","content":"正常"}]}', 'p3a', { sessionId: 'p1-c', source: { id: 'p1-c-f1', order: [3, 0, 0] } }, reporter)}</div>)
+    expect(screen.queryByRole('alert')).toBeNull()
+    // Tier-1 reparable body (stray ASCII quotes inside a value) → healed
+    // into real UI, still no report: the loop is only for UNrepairable
+    // failures, not for every repaired imperfection.
+    const QUOTED = '{"title":"演示","items":[{"type":"text","content":"对"别名路径"判定失败"}]}'
+    render(<div>{renderGenuiFence(QUOTED, 'p3b', { sessionId: 'p1-c', source: { id: 'p1-c-f2', order: [3, 0, 1] } }, reporter)}</div>)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(document.body.textContent).toContain('判定失败')
+    expect(reporter).not.toHaveBeenCalled()
+  })
+
+  it('reports a NEW failure independently (dedup is per fence identity, not global)', () => {
+    const reporter = vi.fn()
+    const first = { sessionId: 'p1-d', source: { id: 'p1-d-f1', order: [4, 0, 0] } }
+    render(<div>{renderGenuiFence(UNREPAIRABLE, 'p4a', first, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(1)
+    cleanup()
+    // The model re-issued the fence under a NEW message identity and failed
+    // again: the second failure must also reach the model — dedup keys on
+    // the source identity, it is not a report-once-per-session flag.
+    const second = { sessionId: 'p1-d', source: { id: 'p1-d-f2', order: [5, 0, 0] } }
+    render(<div>{renderGenuiFence(UNREPAIRABLE, 'p4b', second, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(2)
+    const failure = reporter.mock.calls[1]![0] as { sourceId: string }
+    expect(failure.sourceId).toBe('p1-d-f2')
+  })
+
+  it('stays silent without a session route — and the banner still shows', () => {
+    const reporter = vi.fn()
+    // A context with a source but no session: no conversation.send channel
+    // exists, so there is nothing to relay — but the visible diagnostic is
+    // independent of the loop.
+    render(<div>{renderGenuiFence(UNREPAIRABLE, 'p5', { source: { id: 'p1-e-f1', order: [6, 0, 0] } }, reporter)}</div>)
+    expect(reporter).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain('解析失败')
+  })
+})
+
+describe('P1 dedup persistence across page reloads (localStorage)', () => {
+  // Regression: the dedup set used to live in module memory only — a page
+  // refresh re-seeded an EMPTY set, so every historical bad fence re-mounted
+  // into a fresh report and the model heard the same dead failure again on
+  // every reload. The keys now ride localStorage; a fresh module graph (the
+  // in-test stand-in for a reload) must dedup against the persisted keys.
+  const DEDUP_KEY = 'dsh-genui:fence-failure-dedup:v1'
+  const UNREPAIRABLE = '{"title":\'演示\',"items":[{"type":"text","content":"好"}]}'
+
+  it('persists the reported key and re-loads it after a simulated refresh', async () => {
+    localStorage.clear()
+    const ctx = { sessionId: 'dedup-persist', source: { id: 'dedup-persist-f1', order: [9, 0, 0] } }
+    // First load: the failure reports and its key lands in localStorage.
+    const reporter1 = vi.fn()
+    render(<div>{renderGenuiFence(UNREPAIRABLE, 'dp1', ctx, reporter1)}</div>)
+    expect(reporter1).toHaveBeenCalledTimes(1)
+    const stored = JSON.parse(localStorage.getItem(DEDUP_KEY) ?? '[]') as string[]
+    expect(stored.length).toBeGreaterThan(0)
+    expect(stored.some(k => k.startsWith('dedup-persist|'))).toBe(true)
+    cleanup()
+    // Simulated refresh: a fresh module graph re-seeds the dedup set from
+    // storage. The SAME failure re-mounting must NOT re-report.
+    vi.resetModules()
+    const fresh = await import('../src/client/index.tsx')
+    const reporter2 = vi.fn()
+    render(<div>{fresh.renderGenuiFence(UNREPAIRABLE, 'dp1', ctx, reporter2)}</div>)
+    expect(reporter2).not.toHaveBeenCalled()
+    // The fresh module is not a global mute: a NEW fence identity still
+    // reports exactly once.
+    const ctx2 = { sessionId: 'dedup-persist', source: { id: 'dedup-persist-f2', order: [10, 0, 0] } }
+    const reporter3 = vi.fn()
+    render(<div>{fresh.renderGenuiFence(UNREPAIRABLE, 'dp2', ctx2, reporter3)}</div>)
+    expect(reporter3).toHaveBeenCalledTimes(1)
+  })
+
+  it('bounds the persisted set — oldest keys evict past the cap', async () => {
+    localStorage.clear()
+    // Pre-fill storage with a full cap of stale keys, then reload the module.
+    const seeds: string[] = []
+    for (let i = 0; i < 400; i++) seeds.push(`seed-session|seed-src-${i}|seed-diag`)
+    localStorage.setItem(DEDUP_KEY, JSON.stringify(seeds))
+    vi.resetModules()
+    const fresh = await import('../src/client/index.tsx')
+    // The new failure is not among the seeds → reports and persists.
+    const reporter = vi.fn()
+    const ctx = { sessionId: 'evict-session', source: { id: 'evict-f1', order: [11, 0, 0] } }
+    render(<div>{fresh.renderGenuiFence(UNREPAIRABLE, 'ev1', ctx, reporter)}</div>)
+    expect(reporter).toHaveBeenCalledTimes(1)
+    const stored = JSON.parse(localStorage.getItem(DEDUP_KEY) ?? '[]') as string[]
+    // The store stays capped and the OLDEST seed was the one evicted.
+    expect(stored.length).toBeLessThanOrEqual(400)
+    expect(stored).not.toContain('seed-session|seed-src-0|seed-diag')
+    expect(stored.some(k => k.startsWith('evict-session|'))).toBe(true)
+  })
+})
+
+describe('P3 truncated degradation is visible (partial UI + amber note)', () => {
+  it('notes that content was dropped when the repair truncates', () => {
+    // Whole-JSON parsing fails and no balanced prefix yields a spec (the
+    // root object never closes), so tier-2 runs; the orphan member ["尾巴"
+    // cannot merge back ("k":1 intervened) and the fully repaired body
+    // cannot parse → the truncation fallback keeps the table + k and DROPS
+    // the orphan tail. The rendered UI is only the prefix — that loss must
+    // surface instead of passing as a clean render.
+    const body = '{"type":"table","columns":["a"],"rows":[["留一"],["留二"]],"k":1,["尾巴"'
+    render(<div>{renderGenuiFence(body, 'tr1', { sessionId: 'tr', source: { id: 'tr-f1', order: [12, 0, 0] } })}</div>)
+    // The truncated prefix still renders as real UI.
+    expect(document.body.textContent).toContain('留二')
+    // The amber note says content was dropped.
+    expect(screen.getByRole('note').textContent).toContain('丢弃')
+    // No red banner — a degraded render is still a render, not a failure.
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+describe('fence failure relay template redacts the V8 body excerpt', () => {
+  it('keeps position + error type, never the fence body snippet', () => {
+    const diagnostic = '（字符 9 附近）Unexpected token \'x\', "{\"content\":\"机密正文\"…}" is not valid JSON'
+    const message = fenceFailureReportMessage(diagnostic)
+    expect(message).toContain('fence-parse-failure')
+    expect(message).toContain('（字符 9 附近）Unexpected token')
+    // The quoted fence-body excerpt must NOT ride into the conversation.
+    expect(message).not.toContain('机密正文')
   })
 })

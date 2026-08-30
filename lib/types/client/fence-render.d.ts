@@ -30,6 +30,19 @@ export interface GenuiFenceContext {
     /** Present only for settled/interrupted renders with a stable identity. */
     readonly source?: GenuiFenceSource;
 }
+/** Observation-loop payload for a SETTLED, unrepairable fence body: the
+ * owning session route (absent outside a session-scoped render — nothing to
+ * relay then), the stable source identity when the host provided one, and
+ * the human-readable parse failure (position + reason; never fence content). */
+export interface GenuiFenceFailure {
+    readonly sessionId: string | undefined;
+    readonly sourceId: string | undefined;
+    readonly diagnostic: string;
+}
+/** Reporter seam: the client entry wires this to the scoped conversation
+ * send so the model learns its fence never rendered (P1 observation loop).
+ * Fired AT MOST ONCE per failed fence identity — see the dedup set below. */
+export type GenuiFenceFailureReporter = (failure: GenuiFenceFailure) => void;
 /**
  * Resolve a raw fence body to a guarded spec.
  *
@@ -62,5 +75,11 @@ export declare function renderResolvedFenceNode(raw: string, key: Key, context?:
  * but an unrepairable body renders the fallback code block + settled
  * diagnostic — the host replaced its own block with our output — and an
  * unpublishable `panel:true` fence renders `null` (nothing in the flow).
+ *
+ * `reportFailure` (optional) closes the observation loop on settled,
+ * unrepairable bodies: the client entry passes a reporter that relays the
+ * parse failure to the model through the same scoped conversation send the
+ * [genui-action] channel uses. Optional so host/test callers that register
+ * the renderer with the plain three-argument contract keep working.
  */
-export declare function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext): ReactNode;
+export declare function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext, reportFailure?: GenuiFenceFailureReporter): ReactNode;

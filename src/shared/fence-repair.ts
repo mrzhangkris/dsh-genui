@@ -42,6 +42,25 @@ export function describeJsonFailure(raw: string): string | null {
 }
 
 /**
+ * Strip the embedded body snippet from a JSON.parse diagnostic before it
+ * rides a message into the CONVERSATION (the P1 fence-failure relay). V8's
+ * token errors append a 20–30 character quoted excerpt of the fence body —
+ * `Unexpected token '模', "…正文片段…" is not valid JSON` — and that excerpt
+ * is fence content, which may carry field text the report must not echo.
+ * Keep only the position and the error type: cut at the first double quote
+ * (the snippet's opening delimiter — the type part before it only ever uses
+ * single quotes) and drop the trailing separator. Messages without a quoted
+ * snippet (older V8 shapes, "Unexpected end of JSON input", …) pass through
+ * unchanged.
+ */
+export function redactJsonErrorSnippet(diagnostic: string): string {
+  const cut = diagnostic.indexOf('"')
+  if (cut === -1) return diagnostic
+  const head = diagnostic.slice(0, cut).replace(/[\s,，]+$/u, '')
+  return head === '' ? 'JSON 语法错误' : head
+}
+
+/**
  * Tier-1 repair — SAFE AT ANY TIME (streaming included): heals the most
  * common model JSON typos that do NOT change the body's structure, and only
  * when the whole body parses afterwards (so a still-growing streaming half
@@ -181,12 +200,30 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
  * object context, where only `"key":` pairs are legal). When the scan sees a
  * `,` directly (modulo whitespace) after a just-closed value array and the
  * next non-space char is `[` or `{`, it deletes that closer to reopen the
- * array so the orphan becomes its next element. A value OBJECT closed early
- * is deliberately NOT healed: deleting its `}` leaves the orphan's own
- * `{...}` shell as a bare literal inside the object (`{"a":1,{"b":2}}`),
- * which is still invalid — no single deletion can make it parse.
+ * array so the orphan becomes its next element. The same merge also fires for
+ * a BARE bracket orphan — the author dropped the comma entirely
+ * (`"rows":[[a],[b]] ["c","d"]`): at object member position (stack top `}`
+ * and expecting a key) a bracket literal is never legal, so the scan
+ * backtracks to the nearest just-closed key-value array, replaces its closer
+ * with the missing `,` and merges the orphan in as the next element. A value
+ * OBJECT closed early is deliberately NOT healed: deleting its `}` leaves
+ * the orphan's own `{...}` shell as a bare literal inside the object
+ * (`{"a":1,{"b":2}}`), which is still invalid — no single deletion can make
+ * it parse.
+ *
+ * Truncated degradation: when the scan DID repair something but the completed
+ * body still does not parse (damage no heal can fix), the repairer does not
+ * give up. Every orphan/merge point in an object member list records a
+ * truncation candidate — the prefix emitted before it plus the closers open
+ * at that moment. The fallback drops the orphan tail and keeps the longest
+ * repaired prefix that parses as whole JSON on its own (never an empty
+ * `{}`/`[]` shell): partial UI beats a diagnostic banner. The result then
+ * carries `truncated: true` so callers can surface that content was DROPPED
+ * instead of rendering the degraded prefix as if nothing was lost. Bodies
+ * where the scan repaired nothing, or that carry no orphan truncation point,
+ * still fail honestly with null.
  */
-export function completeFenceJson(raw: string): { text: string; repairs: number } | null {
+export function completeFenceJson(raw: string): { text: string; repairs: number; truncated?: boolean } | null {
   try {
     JSON.parse(raw)
     return null
@@ -225,6 +262,24 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
   // no such closer is pending.
   let valueCloserIndex = -1
   let valueCloserChar = ''
+  // P3 truncation candidates: for every orphan / merge point in an object
+  // member list, the out-prefix length before it and a copy of the open
+  // stack at that moment. Consulted only when the fully repaired body still
+  // fails the whole-JSON adoption gate — the fallback then drops the orphan
+  // tail and closes the structure as it stood at the cut.
+  const cuts: Array<{ at: number; open: Array<'}' | ']'> }> = []
+  const noteCut = (): void => {
+    cuts.push({ at: out.length, open: [...stack] })
+  }
+  // True when the member-value ARRAY closer tracked above is still FRESH —
+  // nothing but whitespace emitted since it closed — so a bare orphan
+  // bracket can merge straight back into it.
+  const freshMemberArray = (): boolean =>
+    stack[stack.length - 1] === '}' &&
+    valueCloserChar === ']' &&
+    valueCloserIndex >= 0 &&
+    out[valueCloserIndex] === valueCloserChar &&
+    out.slice(valueCloserIndex + 1).trim() === ''
   for (let i = 0; i < raw.length; i++) {
     const ch = raw[i]
     if (pendingEqualsColon && ch === '=') {
@@ -279,12 +334,44 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
       continue
     }
     if (ch === '{') {
+      // P2: a bare `{` at object member position (a `"key"` must come — a
+      // bracket literal is never legal here) with a fresh just-closed member
+      // ARRAY right before it: the author dropped the comma. Replace that
+      // array's closer with the missing `,` to reopen it, and the orphan
+      // object becomes its next element (same heal as the comma branch).
+      if (stack[stack.length - 1] === '}' && expectingKey) {
+        if (freshMemberArray()) {
+          out = out.slice(0, valueCloserIndex) + ',' + out.slice(valueCloserIndex + 1)
+          stack.push(']')
+          valueCloserIndex = -1
+          valueCloserChar = ''
+          repairs++
+          noteCut()
+        } else {
+          noteCut()
+        }
+      }
       stack.push('}')
       expectingKey = true
       out += ch
       continue
     }
     if (ch === '[') {
+      // P2: same bare-bracket heal for `[` orphans — object member position
+      // (stack top `}` and expecting a key) proves the author meant this
+      // array as the next element of the just-closed key-value array.
+      if (stack[stack.length - 1] === '}' && expectingKey) {
+        if (freshMemberArray()) {
+          out = out.slice(0, valueCloserIndex) + ',' + out.slice(valueCloserIndex + 1)
+          stack.push(']')
+          valueCloserIndex = -1
+          valueCloserChar = ''
+          repairs++
+          noteCut()
+        } else {
+          noteCut()
+        }
+      }
       stack.push(']')
       expectingKey = true
       out += ch
@@ -336,17 +423,21 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
       // structure no deletion can justify. The whole-body parse below is the
       // final arbiter.
       if (next === '[' || next === '{') {
-        const mergeable =
-          stack[stack.length - 1] === '}' &&
-          valueCloserChar === ']' &&
-          valueCloserIndex >= 0 &&
-          out[valueCloserIndex] === valueCloserChar &&
-          out.slice(valueCloserIndex + 1).trim() === ''
-        if (mergeable) {
+        if (freshMemberArray()) {
           out = out.slice(0, valueCloserIndex) + out.slice(valueCloserIndex + 1)
           stack.push(']')
           valueCloserIndex = -1
+          valueCloserChar = ''
           repairs++
+          // P3 fallback point: if the merged tail still cannot parse,
+          // degrade to the pre-orphan structure (close the reopened array).
+          noteCut()
+        } else if (stack[stack.length - 1] === '}') {
+          // An orphan literal this scan cannot merge (stale closer, an object
+          // closer, or none): a key must follow a member-list comma, so the
+          // bracket is never legal where it stands. Remember the pre-comma
+          // position so the truncation fallback can drop it wholesale.
+          noteCut()
         }
       }
       expectingKey = true
@@ -365,10 +456,22 @@ export function completeFenceJson(raw: string): { text: string; repairs: number 
     repairs++
   }
   if (repairs === 0) return null
-  try {
-    JSON.parse(out)
-    return { text: out, repairs }
-  } catch {
-    return null
+  if (isCompleteJson(out)) return { text: out, repairs }
+  // P3 — truncated degradation: the repaired body still does not parse, so
+  // some damage survives every heal. Drop the orphan tail instead of giving
+  // up: each recorded cut is a prefix + the closers open at that moment. Try
+  // the LONGEST prefix first (keep as much repaired content as possible);
+  // adopt only when the truncated remainder parses on its own — the
+  // all-or-nothing adoption gate applies to the degraded result exactly as
+  // to the full one. An empty shell is not a meaningful recovery.
+  for (let k = cuts.length - 1; k >= 0; k--) {
+    const cut = cuts[k]!
+    const kept = out.slice(0, cut.at).replace(/,\s*$/u, '')
+    const candidate = kept + cut.open.slice().reverse().join('')
+    if (candidate === '{}' || candidate === '[]') continue
+    // truncated: true — this text is only the surviving PREFIX; the orphan
+    // tail behind the cut was dropped to make it parse.
+    if (isCompleteJson(candidate)) return { text: candidate, repairs: repairs + 1, truncated: true }
   }
+  return null
 }

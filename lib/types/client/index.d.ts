@@ -27,6 +27,20 @@ import { renderGenuiFence } from './fence-render.tsx';
  * either way — the on-demand loader still covers a cache miss. Exported for
  * tests. */
 export declare function prefetchGenuiAssets(): void;
+/**
+ * P1 observation loop — fence-failure relay: when a settled ```dsh-ui body
+ * fails to parse and no repair can save it, tell the model through the same
+ * scoped conversation send the [genui-action] channel uses, so the author
+ * knows the fence degraded to a code block (with the parse position) and
+ * avoids the error class next time. The diagnostic is the JSON.parse error
+ * text only — never the fence body (it may carry field content): V8's token
+ * errors embed a 20–30 character quoted excerpt of the BODY, so the template
+ * runs the diagnostic through {@link redactJsonErrorSnippet} and keeps only
+ * the position and error type. The send is fire-and-forget: a failed prompt
+ * drops the report; the red banner in FenceFallback remains the user-facing
+ * signal either way.
+ */
+export declare function fenceFailureReportMessage(diagnostic: string): string;
 /** Cordis client entry: register the fence renderer on boot, the keyed
  * toolview for the render_ui tool, and the session panel dock; returning the
  * disposers lets cordis tear all registrations down on plugin unload. */

@@ -57,6 +57,23 @@ describe('genui:fence section', () => {
     }
   })
 
+  it('states the table validate gate exactly once (no duplicated rule lines)', async () => {
+    // Regression: the Rules block used to carry TWO near-duplicate lines for
+    // the same rule — "JSON 严格" (…rows≥5 行的 table 必须先调 validate…) and a
+    // whole second "表格硬门" line restating it. Merged into one: the section
+    // must mention rows≥5 exactly once, keep the fallback directive, and never
+    // grow the second line back.
+    const assembly = await assemble()
+    const section = assembly.sections.find(s => s.name === 'genui:fence')
+    expect(section).toBeDefined()
+    const text = typeof section!.text === 'string' ? section!.text : ''
+    expect((text.match(/rows≥5/gu) ?? []).length).toBe(1)
+    expect(text).not.toContain('表格硬门')
+    // The merged line still carries the failure fallback (small tables /
+    // list/keyvalue cards instead of re-sending the same big table).
+    expect(text).toContain('list/keyvalue 卡片替代')
+  })
+
   it('sorts the section among the tool-guidance sections', async () => {
     const assembly = await assemble()
     const names = assembly.sections.map(s => s.name)

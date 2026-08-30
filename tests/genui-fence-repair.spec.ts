@@ -3,7 +3,7 @@
 // repair tiers must heal it — tier-1 alone, and tier-2 folded with a missing
 // closer — and never adopt garbage.
 import { describe, expect, it } from 'vitest'
-import { completeFenceJson, repairFenceJson } from '../src/shared/fence-repair.ts'
+import { completeFenceJson, redactJsonErrorSnippet, repairFenceJson } from '../src/shared/fence-repair.ts'
 
 describe('repairFenceJson: `=` → `:` key-value separator', () => {
   it('heals a single `"key"="value"` mistake', () => {
@@ -148,5 +148,153 @@ describe('completeFenceJson: orphan array sibling merged back (孤儿数组元�
     expect(repairFenceJson('{"a":[1],"b":[2]}')).toBeNull()
     expect(repairFenceJson('{"m":[[1],[2]],"k":1}')).toBeNull()
     expect(completeFenceJson('{"a":[1],"b":[2]}')).toBeNull()
+  })
+})
+
+describe('completeFenceJson: bare-bracket orphan at object position (P2: 缺逗号并回键值数组)', () => {
+  it('merges a bare array orphan separated by whitespace only (author dropped the comma)', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]] ["c","d"]}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c', 'd']] })
+  })
+
+  it('merges with no separator at all', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]]["c","d"]}')
+    expect(r).not.toBeNull()
+    expect(r!.text).toBe('{"rows":[[1],[2],["c","d"]]}')
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c', 'd']] })
+  })
+
+  it('merges across newlines/tabs (whitespace-only gap stays fresh)', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]]\n\t["c"]}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c']] })
+  })
+
+  it('merges a bare OBJECT orphan the same way (arrays accept any value)', () => {
+    const r = completeFenceJson('{"rows":[[1]] {"a":1}}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], { a: 1 }] })
+  })
+
+  it('composes with a still-missing closer in one pass', () => {
+    const r = completeFenceJson('{"rows":[[1],[2]] ["c"')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2], ['c']] })
+  })
+
+  it('does NOT merge after a value-OBJECT closer (key-value ARRAYS only)', () => {
+    // Deleting the } of {"x":1} cannot produce valid JSON — same rationale
+    // as the comma variant; no closer to reopen, nothing adopted.
+    expect(completeFenceJson('{"a":{"x":1} ["b"]}')).toBeNull()
+  })
+
+  it('does NOT fire at root level (object member lists only)', () => {
+    expect(completeFenceJson('[[1],[2]] ["c"]')).toBeNull()
+  })
+
+  it('does NOT merge over intermediate members (closer must be fresh)', () => {
+    // "k":1 sits between the "rows" closer and the bare [ — backtracking
+    // over it would steal the orphan into "rows" while corrupting "k".
+    expect(completeFenceJson('{"rows":[[1],[2]],"k":1 ["c"]}')).toBeNull()
+  })
+})
+
+describe('completeFenceJson: truncated degradation when full repair fails (P3: 截断降级)', () => {
+  it('drops an unmergeable orphan tail and keeps the repaired prefix', () => {
+    // The orphan ["x" cannot merge (stale closer — "k":1 intervened) and the
+    // body needs appended closers, so the full result cannot parse. Degrade:
+    // drop the orphan, keep rows + k.
+    const r = completeFenceJson('{"rows":[[1],[2]],"k":1,["x"')
+    expect(r).not.toBeNull()
+    expect(r!.text).toBe('{"rows":[[1],[2]],"k":1}')
+    expect(JSON.parse(r!.text)).toEqual({ rows: [[1], [2]], k: 1 })
+    expect(r!.repairs).toBe(3) // 2 appended closers + 1 truncation
+  })
+
+  it('prefers the LONGEST repaired prefix (keeps later legal members)', () => {
+    // Two orphan members; cutting at the last orphan keeps ["x"] which still
+    // cannot parse on its own — the gate rejects it and the fallback settles
+    // on the earlier cut, preserving "b".
+    const r = completeFenceJson('{"a":[0],"b":1,["x"],"c":2,["y"]')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ a: [0], b: 1 })
+  })
+
+  it('degrades to the pre-orphan structure when a MERGED orphan tail stays broken', () => {
+    // The orphan merges fine, but its own "c": is damaged (stray :) so the
+    // whole body still fails the gate. Fall back to the pre-orphan cut taken
+    // at merge time: rows closes where the author had closed it.
+    const r = completeFenceJson('{"rows":[[1],[2]],["c":}')
+    expect(r).not.toBeNull()
+    expect(r!.text).toBe('{"rows":[[1],[2]]}')
+  })
+
+  it('never degrades to an empty shell', () => {
+    // The only cut would leave {} — an empty UI is not a recovery; fail
+    // honestly instead.
+    expect(completeFenceJson('{{"a":1}')).toBeNull()
+  })
+
+  it('still returns null when no orphan truncation point exists', () => {
+    // Bare garbage has no bracket-orphan cut candidate; nothing to degrade.
+    expect(completeFenceJson('{"title": "x", garbage')).toBeNull()
+  })
+
+  it('does not engage when the scan repaired nothing (repairs=0 gate)', () => {
+    // Balanced-but-orphaned bodies must keep failing honestly — degradation
+    // only rides on an otherwise-active repair pass.
+    expect(completeFenceJson('{"a":[0],"b":1,["x"]}')).toBeNull()
+  })
+
+  it('flags every truncated adoption with truncated: true (P3 可见性)', () => {
+    // A degraded result silently rendered as if nothing was lost — the flag
+    // is how the renderer/validate tool learn content was DROPPED.
+    const r = completeFenceJson('{"rows":[[1],[2]],"k":1,["x"')
+    expect(r).not.toBeNull()
+    expect(r!.truncated).toBe(true)
+  })
+
+  it('does NOT flag full repairs (no truncation, nothing dropped)', () => {
+    // Tier-2 healing that parses on its own keeps the plain outcome shape.
+    const healed = completeFenceJson('{"tone"="info","content":"x"')
+    expect(healed).not.toBeNull()
+    expect(healed!.truncated).not.toBe(true)
+    // Tier-1 outcomes never carry the flag either.
+    const tier1 = repairFenceJson('{"type":"callout","tone"="info","content":"x"}')
+    expect(tier1).not.toBeNull()
+    expect(tier1!.truncated).not.toBe(true)
+  })
+})
+
+describe('redactJsonErrorSnippet: strip the V8 body excerpt from diagnostics', () => {
+  it('keeps only position and error type for V8 token errors', () => {
+    // The exact V8 shape (Node 20+/Chrome): the message embeds a 20–30 char
+    // quoted excerpt of the fence BODY after the error type.
+    const diagnostic = '（字符 9 附近）Unexpected token \'模\', "{\"a\":模}" is not valid JSON'
+    expect(redactJsonErrorSnippet(diagnostic)).toBe('（字符 9 附近）Unexpected token \'模\'')
+  })
+
+  it('removes the body excerpt from a REAL JSON.parse error', () => {
+    let message = ''
+    try {
+      JSON.parse('{"content":"秘密正文不应外泄"} 坏')
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).not.toBe('')
+    const redacted = redactJsonErrorSnippet(`（字符 30 附近）${message}`)
+    expect(redacted).not.toContain('秘密正文')
+    expect(redacted.length).toBeGreaterThan(0)
+  })
+
+  it('passes snippet-free messages through unchanged', () => {
+    expect(redactJsonErrorSnippet('Unexpected end of JSON input')).toBe('Unexpected end of JSON input')
+    expect(redactJsonErrorSnippet('（字符 51 附近）Expected ',' or \'}\'' + ' after property value in JSON at position 51'))
+      .toBe('（字符 51 附近）Expected ',' or \'}\'' + ' after property value in JSON at position 51')
+  })
+
+  it('falls back to a generic label when only the snippet remains', () => {
+    expect(redactJsonErrorSnippet('"只有片段"')).toBe('JSON 语法错误')
   })
 })

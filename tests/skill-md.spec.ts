@@ -39,3 +39,18 @@ describe('SKILL.md frontmatter (host yaml parser)', () => {
     expect((data.description as string).length).toBeGreaterThan(20)
   })
 })
+
+describe('SKILL.md body: table validate gate matches the injected section', () => {
+  // Alignment regression (注入段与 SKILL.md 口径分叉): the injected
+  // genui:fence section gates validate_dsh_ui on tables with rows≥5 only,
+  // so SKILL.md must not demand pre-validation for EVERY table. The old
+  // blanket trigger "表格/图表/嵌套容器…任一层级" silently re-tightened the
+  // rule the injection had relaxed.
+  const raw = readFileSync(join(process.cwd(), 'SKILL.md'), 'utf8')
+
+  it('keys the table gate on rows ≥5 (not every table)', () => {
+    expect(raw).toContain('rows ≥5 的表格')
+    expect(raw).toContain('小表格（rows <5）')
+    expect(raw).not.toContain('表格/图表/嵌套容器')
+  })
+})
