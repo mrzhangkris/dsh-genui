@@ -82,3 +82,13 @@ describe('GenUI table overflow', () => {
     }
   })
 })
+
+
+describe('table row hover does not animate repaints (upstream #92/#55)', () => {
+  it('has no transition on resting table rows', () => {
+    const css = readFileSync(join(process.cwd(), 'src/client/GenuiBlock.module.css'), 'utf8')
+    expect(css).toMatch(/\.table tbody tr:hover\s*\{[^}]*background:/)
+    const restingRule = /\.table tbody tr\s*\{([^}]*)\}/.exec(css)
+    expect(restingRule?.[1] ?? '').not.toMatch(/\btransition\s*:/)
+  })
+})
