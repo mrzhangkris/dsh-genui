@@ -74,6 +74,40 @@ describe('panel append fence (settled source)', () => {
     expect(tabs.map(t => t.label)).toEqual(['A'])
   })
 
+  it('publishes an append whose only defect is a repairable trailing comma', () => {
+    // The whole-body gate used to test isCompleteJson(RAW), which is false
+    // for a trailing-comma body — the append was silently dropped even though
+    // the repair pipeline had resolved a complete spec from the full text.
+    applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
+    const body = `${JSON.stringify({ panel: true, append: true, items: [{ type: 'tabs', tabs: [{ label: 'A', items: [text('a2')] }] }] }).slice(0, -1)},}`
+    render(renderGenuiFence(body, 'k-tc', ctx(1)) as never)
+    const spec = getPanelSpec('p1')!
+    const tabs = (spec.items[0] as { tabs: Array<{ label: string; items: unknown[] }> }).tabs
+    expect(tabs[0]!.items).toHaveLength(2) // a1 + a2 — the append merged
+  })
+
+  it('publishes an append healed from unescaped quotes inside a value', () => {
+    applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
+    // Unescaped quote inside a string value: tier-1 heals the whole body.
+    const body = '{"panel":true,"append":true,"items":[{"type":"tabs","tabs":[{"label":"A","items":[{"type":"text","content":"对"别名"的容错"}]}]}]}'
+    render(renderGenuiFence(body, 'k-q', ctx(1)) as never)
+    const spec = getPanelSpec('p1')!
+    const tabs = (spec.items[0] as { tabs: Array<{ label: string; items: unknown[] }> }).tabs
+    expect(tabs[0]!.items).toHaveLength(2)
+    expect((tabs[0]!.items[1] as { content: string }).content).toBe('对"别名"的容错')
+  })
+
+  it('still refuses an append whose body is missing a closing bracket (tier-2 territory)', () => {
+    applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
+    // Missing closers are indistinguishable from streaming truncation — the
+    // gate stays conservative and never merges a bracket-completed body.
+    const body = JSON.stringify({ panel: true, append: true, items: [{ type: 'tabs', tabs: [{ label: 'A', items: [text('a2')] }] }] }).slice(0, -2)
+    render(renderGenuiFence(body, 'k-br', ctx(1)) as never)
+    const spec = getPanelSpec('p1')!
+    const tabs = (spec.items[0] as { tabs: Array<{ label: string; items: unknown[] }> }).tabs
+    expect(tabs[0]!.items).toHaveLength(1) // unchanged — append not merged
+  })
+
   it('merges a completed append fence exactly once per source (renderer re-invokes)', () => {
     applyPanelOperation('p1', { sourceId: 'seed', order: [0, -1, 0], mode: 'replace', spec: tabsSpec([{ label: 'A', items: [text('a1')] }]) })
     const body = JSON.stringify({ panel: true, append: true, items: [{ type: 'tabs', tabs: [{ label: 'B', items: [text('b1')] }] }] })
