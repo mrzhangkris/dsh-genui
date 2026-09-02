@@ -203,3 +203,69 @@ describe('v2.7: form submit semantics', () => {
     }]])
   })
 })
+
+describe('spec updates drive un-interacted controls (panel replace semantics)', () => {
+  // The mount-only initializers (defaultChecked / useState(node.checked) / …)
+  // used to freeze the first render's value forever: a model re-render that
+  // changed `checked`/`selected` never reached the UI. The override pattern
+  // keeps the control following the spec until the user interacts.
+  const rerender = (view: { rerender: (ui: React.ReactElement) => void }, spec: unknown, onAction?: (a: string, p: Record<string, unknown>) => void) => {
+    view.rerender(
+      <GenuiActionContext.Provider value={onAction ?? (() => {})}>
+        <GenuiBlock spec={spec as never} />
+      </GenuiActionContext.Provider>,
+    )
+  }
+
+  it('checkbox follows spec checked updates until the user interacts', () => {
+    const specA = { items: [{ type: 'checkbox', label: '自动保存' }] }
+    const specB = { items: [{ type: 'checkbox', label: '自动保存', checked: true }] }
+    const view = renderBlock(specA, undefined)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+    rerender(view, specB)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(true)
+    // User interaction wins from now on: clicking toggles OFF (true → false),
+    // and that choice survives further spec updates back to checked:true.
+    fireEvent.click(view.container.querySelector('input')!)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+    rerender(view, specB)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('switch follows spec checked updates until the user toggles', () => {
+    const specA = { items: [{ type: 'switch', label: '通知' }] }
+    const specB = { items: [{ type: 'switch', label: '通知', checked: true }] }
+    const view = renderBlock(specA, undefined)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    rerender(view, specB)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
+    // Toggling OFF wins over any later spec update.
+    fireEvent.click(view.container.querySelector('[role="switch"]')!)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    rerender(view, specB)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('ungrouped radio follows spec selected updates until the user picks', () => {
+    const opts = { options: ['A', 'B', 'C'] }
+    const view = renderBlock({ items: [{ type: 'radio', label: '主题', ...opts }] }, undefined)
+    const inputs = view.container.querySelectorAll('[role="radiogroup"] input')
+    expect((inputs[0] as HTMLInputElement).checked).toBe(false)
+    rerender(view, { items: [{ type: 'radio', label: '主题', ...opts, selected: 2 }] })
+    expect((view.container.querySelectorAll('[role="radiogroup"] input')[2] as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(view.container.querySelectorAll('[role="radiogroup"] input')[0]!)
+    rerender(view, { items: [{ type: 'radio', label: '主题', ...opts, selected: 1 }] })
+    expect((view.container.querySelectorAll('[role="radiogroup"] input')[0] as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('input follows spec value updates (no id, no durable registration) until edited', () => {
+    const view = renderBlock({ items: [{ type: 'input', label: '关键词' }] }, undefined)
+    const input = view.container.querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('')
+    rerender(view, { items: [{ type: 'input', label: '关键词', value: '预填' }] })
+    expect(input.value).toBe('预填')
+    fireEvent.change(input, { target: { value: '用户改' } })
+    rerender(view, { items: [{ type: 'input', label: '关键词', value: '又改' }] })
+    expect(input.value).toBe('用户改')
+  })
+})
