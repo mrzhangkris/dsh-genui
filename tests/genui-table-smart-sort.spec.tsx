@@ -4,7 +4,7 @@
 // `3.5万`, `0.3%`, `¥99` compare as real numbers instead of strings, numeric
 // columns right-align, and the button/copy confirmations announce via hidden
 // live regions (button content is atomic to screen readers).
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GenuiBlock, GENUI_ACTION_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
@@ -139,14 +139,40 @@ describe('chart polish', () => {
 })
 
 describe('live-region confirmations (a11y)', () => {
-  it('announces 已复制 to clipboard through a hidden status region', () => {
-    const container = renderBlock([{ type: 'copy', label: '复制', text: 'xyz' }])
-    fireEvent.click(container.querySelector('button')!)
-    const status = container.querySelector('[role="status"]')
-    expect(status).not.toBeNull()
-    expect(status!.textContent).toBe('已复制到剪贴板')
-    // visually hidden, not merely display-less
-    expect((status! as HTMLElement).className).toContain('visuallyHidden')
+  const mockClipboard = (impl: { writeText: unknown }) => {
+    const original = navigator.clipboard
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: impl })
+    return () => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: original })
+  }
+
+  it('announces 已复制 to clipboard through a hidden status region', async () => {
+    const restore = mockClipboard({ writeText: vi.fn().mockResolvedValue(undefined) })
+    try {
+      const container = renderBlock([{ type: 'copy', label: '复制', text: 'xyz' }])
+      fireEvent.click(container.querySelector('button')!)
+      const status = container.querySelector('[role="status"]')
+      expect(status).not.toBeNull()
+      await waitFor(() => expect(status!.textContent).toBe('已复制到剪贴板'))
+      // visually hidden, not merely display-less
+      expect((status! as HTMLElement).className).toContain('visuallyHidden')
+    } finally {
+      restore()
+    }
+  })
+
+  it('does NOT announce success when the clipboard write fails', async () => {
+    const restore = mockClipboard({ writeText: vi.fn().mockRejectedValue(new Error('NotAllowedError')) })
+    try {
+      const container = renderBlock([{ type: 'copy', label: '复制', text: 'xyz' }])
+      const button = container.querySelector('button')!
+      fireEvent.click(button)
+      // flush the async write; a rejected write must not fake success
+      await new Promise((r) => setTimeout(r, 0))
+      expect(button.textContent).not.toContain('已复制')
+      expect(container.querySelector('[role="status"]')!.textContent).toBe('')
+    } finally {
+      restore()
+    }
   })
 
   it('announces 已触发 next to an actionable button', () => {
