@@ -9,11 +9,10 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GenuiActionContext } from '../src/client/action-context.ts'
-import { GenuiBlock, GENUI_ACTION_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
+import { GenuiBlock, GENUI_ACTION_DEBOUNCE_MS, SAVE_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
 import { fingerprint, loadBlockState, saveBlockState, clearBlockState } from '../src/client/interaction-store.ts'
 
-/** 300ms durable-save debounce (see GenuiBlock). */
-const SAVE_MS = 300
+
 
 const paper = {
   items: [
@@ -69,7 +68,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     fireEvent.click(groups[0]!.querySelectorAll('input')[1]!) // q1: 15 ✓
     fireEvent.click(groups[1]!.querySelectorAll('input')[2]!) // q2: 北京 ✓
     fireEvent.click(first.container.querySelector('[class*="submitRow"] button')!) // 交卷 → local grade
-    act(() => { vi.advanceTimersByTime(SAVE_MS) }) // durable save settles
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) }) // durable save settles
     first.unmount()
 
     // "refresh": a brand-new mount with the same stateKey restores everything
@@ -87,7 +86,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     const first = renderBlock(spec, KEY)
     const input = first.container.querySelector('input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '小明' } })
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     const second = renderBlock(spec, KEY)
@@ -100,7 +99,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     const first = renderBlock(paper, KEY_A)
     fireEvent.click(first.container.querySelectorAll('[role="radiogroup"] input')[1]!)
     fireEvent.click(first.container.querySelectorAll('[role="radiogroup"] input')[2]!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     // different stateKey (different content) → no restore, submit disabled
@@ -117,10 +116,10 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     fireEvent.click(groups[0]!.querySelectorAll('input')[1]!)
     fireEvent.click(groups[1]!.querySelectorAll('input')[2]!)
     fireEvent.click(first.container.querySelector('[class*="submitRow"] button')!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     // 重新作答 → cleared + saved
     fireEvent.click(first.container.querySelector('[data-genui-grade] button')!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     const second = renderBlock(paper, KEY)

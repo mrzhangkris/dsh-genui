@@ -9,6 +9,7 @@
  * curve in place. The plot itself supports drag-to-pan and wheel-to-zoom.
  */
 import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ACCENT_FALLBACK } from './blocks/charts.tsx'
 import { sampleExpr } from './safe-math.ts'
 import css from './PlotBlock.module.css'
 
@@ -258,7 +259,7 @@ export const PlotBlock = memo(function PlotBlock({
   // v2.9 draw shapes: line (polyline), area (fill to the locked baseline),
   // scatter (dots only). Colors stay on the shared categorical palette.
   const renderSeries = (s: PlotSeries, i: number, points: string): ReactNode => {
-    const color = seriesColor(i, sampled.length, s.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)'
+    const color = seriesColor(i, sampled.length, s.color) ?? ACCENT_FALLBACK
     const kind = s.kind ?? 'line'
     if (kind === 'scatter') {
       const coords = points === '' ? [] : points.split(' ').map(pt => {
@@ -446,7 +447,7 @@ export const PlotBlock = memo(function PlotBlock({
         <div className={css.legend}>
           {series.map((s, i) => (
             <span key={i} className={css.legendItem}>
-              <span className={css.legendSwatch} style={{ background: seriesColor(i, series.length, s.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)' }} />
+              <span className={css.legendSwatch} style={{ background: seriesColor(i, series.length, s.color) ?? ACCENT_FALLBACK }} />
               {s.label ?? s.expr}
             </span>
           ))}

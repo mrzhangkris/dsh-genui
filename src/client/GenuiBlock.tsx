@@ -16,6 +16,11 @@ import type { GenuiSpec } from './spec.ts'
 
 export const GENUI_ACTION_DEBOUNCE_MS = 300
 
+/** Durable-state save debounce: keystroke-paced `fields` updates collapse
+ * into one localStorage write; the unmount/key-change flush covers the tail.
+ * Exported for the durable-state tests (they previously redeclared 300). */
+export const SAVE_DEBOUNCE_MS = 300
+
 /**
  * Wrap the harness action callback with the per-action trailing debounce.
  * Absent provider = v1 behavior (components are display-only, callback
@@ -193,10 +198,10 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, fallbackSta
     const { answers: a, locked: l, fields: f, secretFields: sf, meta: m } = stateRef.current
     saveBlockState(stateKey, persistedStateOf(a, l, f, sf, m))
   }
-  // Durable save (debounced 300ms — typing in a field fires per keystroke).
+  // Durable save (debounced — typing in a field fires per keystroke).
   useEffect(() => {
     if (stateKey === undefined) return
-    const timer = setTimeout(persistNow, 300)
+    const timer = setTimeout(persistNow, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // persistNow is a per-render closure over stateKey/stateRef; listing it
     // would re-arm the timer every render, so only the state inputs matter.

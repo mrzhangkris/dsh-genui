@@ -47,7 +47,10 @@ const FENCE_ERROR_STYLE: CSSProperties = {
   borderRadius: 6,
   background: 'rgba(239, 68, 68, 0.14)',
   border: '1px solid rgba(239, 68, 68, 0.4)',
-  color: '#f87171',
+  // Host error token (same one DiffBlock uses), with the calibrated red as
+  // fallback for token-less surfaces; the rgba tint/border keep their hex
+  // approximations (the host exposes no error-tint token).
+  color: 'var(--dsw-alias-state-error-primary, #f87171)',
   fontSize: 12,
   lineHeight: 1.55,
   whiteSpace: 'pre-wrap',
