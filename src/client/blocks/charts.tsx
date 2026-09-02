@@ -49,6 +49,10 @@ export function parseSortableNumber(v: unknown): number {
     s = s.slice(0, -1)
   }
   s = s.replace(/[,，\s]/g, '')
+  // A body of nothing but decorations ("¥", "%", "万", "-") must NOT read as
+  // the number 0 — Number('') === 0 silently turned such cells numeric and
+  // right-aligned/sorted them ahead of real text.
+  if (s === '') return NaN
   const n = Number(s)
   if (!Number.isFinite(n)) return NaN
   return n * mult

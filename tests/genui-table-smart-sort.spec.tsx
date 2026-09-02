@@ -52,6 +52,16 @@ describe('parseSortableNumber', () => {
     expect(parseSortableNumber(null)).toBeNaN()
     expect(parseSortableNumber(Number.NaN)).toBeNaN()
   })
+  it('returns NaN for decoration-only cells (never the number 0)', () => {
+    // Number('') === 0 used to turn these into numeric cells: they sorted
+    // ahead of real text and right-aligned as numbers.
+    expect(parseSortableNumber('¥')).toBeNaN()
+    expect(parseSortableNumber('$')).toBeNaN()
+    expect(parseSortableNumber('%')).toBeNaN()
+    expect(parseSortableNumber('万')).toBeNaN()
+    expect(parseSortableNumber('k')).toBeNaN()
+    expect(parseSortableNumber('-')).toBeNaN()
+  })
 })
 
 describe('table smart sorting', () => {
