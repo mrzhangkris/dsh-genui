@@ -5,7 +5,7 @@
  * @module @omdsh-dev/dsh-genui/client/blocks/advanced
  */
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import { CodeBlock, DiffBlock, JsonTree } from '@deepseek-ai/dsh-client-ui-primitives'
+import { CodeBlock, DiffBlock, JsonTree, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from '../GenuiBlock.module.css'
 import { GENUI_LIMITS } from '../guard.ts'
 import { PlotBlock } from '../PlotBlock.tsx'
@@ -231,10 +231,16 @@ export const CopyNode = memo(function CopyNode({ node }: { node: GenuiCopy }) {
         type="button"
         className={`${css.copyChip} ${copied ? css.copyChipDone : ''}`}
         onClick={() => {
-          void navigator.clipboard?.writeText(node.text).catch(() => {})
-          setCopied(true)
-          if (resetTimer.current !== null) clearTimeout(resetTimer.current)
-          resetTimer.current = setTimeout(() => setCopied(false), 1500)
+          // Host writeClipboard: execCommand fallback when the async
+          // clipboard API rejects (insecure context / permissions), and the
+          // ✓ announcement only fires on a REAL write — the old
+          // `writeText().catch(() => {})` lit the chip even on failure.
+          void writeClipboard(node.text).then((ok) => {
+            if (!ok) return
+            setCopied(true)
+            if (resetTimer.current !== null) clearTimeout(resetTimer.current)
+            resetTimer.current = setTimeout(() => setCopied(false), 1500)
+          })
         }}
       >
         {copied ? '✓ 已复制' : (node.label ?? '复制')}
