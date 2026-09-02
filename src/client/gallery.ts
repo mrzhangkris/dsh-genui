@@ -27,6 +27,7 @@ export const gallerySpec: GenuiSpec = {
       { type: 'link', label: '详情链接' },
     ], wrap: true },
     { type: 'divider' },
+    { type: 'image', src: '/demo-image.png', alt: '图片展示演示' },
     { type: 'audio', src: '/demo-audio.mp3', alt: '音频播放器演示' },
     { type: 'video', src: '/demo-video.mp4', alt: '视频播放器演示', poster: '/demo-video.jpg', aspectRatio: '16:9' },
     { type: 'grid', cols: 3, items: [

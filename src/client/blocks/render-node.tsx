@@ -11,6 +11,7 @@ import { GENUI_LIMITS } from '../guard.ts'
 import type { GenuiList, GenuiNode } from '../spec.ts'
 import type { AnswersState, GenuiBlockProps } from './state.ts'
 import { AudioNode, avatarColor, ClickFeedbackButton, VideoNode } from './basic.tsx'
+import { ImageNode } from './image.tsx'
 import { ChartNode, TableNode } from './charts.tsx'
 import {
   CheckboxNode, InputNode, RadioNode, SelectNode, SliderNode, SubmitNode, SwitchNode, TextareaNode,
@@ -129,6 +130,7 @@ export function renderNode(
         ? <a key={key} className={css.link} href={href} target="_blank" rel="noopener noreferrer">{node.label}</a>
         : <span key={key} className={css.linkText}>{node.label}</span>
     }
+    case 'image': return <ImageNode key={`${key}:${node.src}`} node={node} />
     case 'audio': return <AudioNode key={`${key}:${node.src}`} node={node} />
     case 'video': return <VideoNode key={`${key}:${node.src}`} node={node} />
     case 'badge': {

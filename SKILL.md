@@ -63,6 +63,7 @@ description: |
 - code: `{"type":"code","lang":"ts","code":"..."}`
 - callout: `{"type":"callout","tone":"info|success|warning|error","title":"..."?,"content":"..."}`（content 必填）
 - steps: `{"type":"steps","current":n,"steps":[{"title":"...","desc":"..."}]}`
+- image: `{"type":"image","src":"/mmx-files/result.png","alt":"结果图片"?}` — 展示浏览器可访问的 http(s) 或同源相对图片地址；懒加载；不支持 `file:`/`data:` 等本地或主动协议
 - audio: `{"type":"audio","src":"https://.../a.mp3","alt":"..."?,"loop":true?}` — 音频播放器（原生控件）；`src` 仅接受 http(s) 或同源相对路径
 - video: `{"type":"video","src":"https://.../a.mp4","poster":"..."?,"loop":true?,"muted":true?,"aspectRatio":"16:9|4:3|1:1|9:16"?}` — 视频播放器（原生控件，不自动播放）
 
@@ -122,6 +123,7 @@ description: |
 | 数学函数 / 曲线关系 | `plot`（可带参数滑块、动画） |
 | 需要用户操作 / 筛选 / 反馈 | `button`、`input`、`select`、`radio`、`switch`、`tabs` |
 | 3D 物体 / 空间布局 | `scene3d` |
+| 图片 / 截图 / 图表预览 | `image` |
 | 音视频素材演示 | `audio`、`video` |
 | 高级图表（堆叠/缩放/仪表盘等 ECharts 全功能） | `echart` |
 | 架构图 / 系统组成 / 数据流（编辑级） | `diagram` |

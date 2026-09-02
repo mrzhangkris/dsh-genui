@@ -49,6 +49,7 @@ describe('gallery spec', () => {
     expect(document.querySelector('input[type="radio"]')).not.toBeNull()
     expect(body).toContain('复制命令')
     expect(document.querySelector('audio[controls][preload="metadata"]')).not.toBeNull()
+    expect(document.querySelector('img[loading="lazy"][decoding="async"]')).not.toBeNull()
     expect(document.querySelector('video[controls][preload="metadata"]')).not.toBeNull()
     // Advanced
     expect(document.querySelector('[data-genui-callout]')).not.toBeNull()
