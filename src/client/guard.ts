@@ -817,7 +817,10 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
     case 'quiz': {
       if (v.options === undefined && v.choices !== undefined) renamed(ctx, path, 'choices', 'options')
       const question = str(v.question, GENUI_LIMITS.maxString)
-      const options = repairQuizOptions(v.options ?? v.choices)
+      // `answer` rides along so a plain { options: string[], answer } shape
+      // (the simpler form models commonly emit) maps onto the canonical
+      // per-option `correct` markers (upstream #60).
+      const options = repairQuizOptions(v.options ?? v.choices, v.answer)
       if (question === undefined || options === undefined) return null
       return {
         type: 'quiz', question, options,
@@ -1344,13 +1347,14 @@ function walkTree(v: unknown, cap: number, depthLeft: number, ctx: RepairCtx): G
   return out
 }
 
-function repairQuizOptions(v: unknown): Array<{ label: string; correct?: boolean; feedback?: string }> | undefined {
+function repairQuizOptions(v: unknown, answer?: unknown): Array<{ label: string; correct?: boolean; feedback?: string }> | undefined {
   if (!Array.isArray(v)) return undefined
   const out: Array<{ label: string; correct?: boolean; feedback?: string }> = []
   for (const optItem of v) {
     if (out.length >= GENUI_LIMITS.maxQuizOptions) break
     const o = obj(optItem)
-    const label = o === undefined ? undefined : str(o.label, 512)
+    // A bare string item IS the label (models commonly emit string[]).
+    const label = typeof optItem === 'string' ? str(optItem, 512) : o === undefined ? undefined : str(o.label, 512)
     if (label === undefined) continue
     out.push({
       label,
@@ -1358,7 +1362,22 @@ function repairQuizOptions(v: unknown): Array<{ label: string; correct?: boolean
       ...opt('feedback', o === undefined ? undefined : str(o.feedback, GENUI_LIMITS.maxString)),
     })
   }
-  return out
+  // Nothing recoverable (empty array, all-non-string non-object items):
+  // return undefined rather than an empty list, so repairNode drops the
+  // whole quiz instead of half-rendering a question with no options
+  // (upstream #60 second pass).
+  if (out.length === 0) return undefined
+  // The canonical quiz shape stores correctness on each option. Models
+  // commonly emit the simpler { options: string[], answer } form; only use
+  // that alias when no canonical correct marker was supplied.
+  if (out.some(option => option.correct === true)) return out
+  const answerIndex = typeof answer === 'number' && Number.isFinite(answer)
+    ? Math.trunc(answer)
+    : typeof answer === 'string'
+      ? out.findIndex(option => option.label === answer.slice(0, 512))
+      : -1
+  if (answerIndex < 0 || answerIndex >= out.length) return out
+  return out.map((option, index) => index === answerIndex ? { ...option, correct: true } : option)
 }
 
 /**
