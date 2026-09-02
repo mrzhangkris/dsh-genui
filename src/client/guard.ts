@@ -1078,7 +1078,11 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
       const s = sanitizeEChartOption(v[i], depth + 1, budget)
       if (s !== undefined) arr.push(s)
     }
-    return arr.length > 0 ? arr : undefined
+    // An EMPTY array is a legal ECharts value with real semantics (e.g.
+    // `data: []` clears a series; `xAxis.data: []` an empty category axis) —
+    // it used to be dropped, which removed the field and silently changed
+    // what the chart rendered.
+    return arr
   }
   const o = obj(v)
   if (o === undefined) return undefined
@@ -1094,7 +1098,10 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
     }
     out[key] = s
   }
-  return Object.keys(out).length > 0 ? out : undefined
+  // An empty OBJECT still drops: the depth-budget cascade (every level above
+  // the cutoff empties) relies on empty → undefined to strip pathological
+  // nesting entirely — see the depth-cap test.
+  return Object.keys(out).length === 0 ? undefined : out
 }
 
 /**
@@ -1384,9 +1391,11 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       }
       break
     case 'table':
-      // `headers` alias mirrors repair: a headers-only table is valid.
+      // `headers`→`columns` and `data`→`rows` aliases mirror repair: a table
+      // healed from either alias is valid, and validating items-only used to
+      // report working specs as broken (amber warning bar on a rendered UI).
       if (!Array.isArray(v.columns) && !Array.isArray((v as Record<string, unknown>).headers)) errors.push(`${at}: type 'table' requires columns (array)`)
-      if (!Array.isArray(v.rows)) errors.push(`${at}: type 'table' requires rows (array)`)
+      if (!Array.isArray(v.rows) && !Array.isArray((v as Record<string, unknown>).data)) errors.push(`${at}: type 'table' requires rows (array)`)
       break
     case 'chart':
       if (!Array.isArray(v.data) && !Array.isArray(v.points) && !Array.isArray(v.series)) errors.push(`${at}: type 'chart' requires data or series (array)`)

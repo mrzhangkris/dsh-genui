@@ -164,6 +164,18 @@ describe('sanitizeEChartOption: resource budget (via repairGenuiSpec)', () => {
     expect(Object.keys(node!.option!)).toHaveLength(GENUI_LIMITS.maxEChartOptionNodes - 1)
   })
 
+  it('preserves an explicitly empty array (legal ECharts semantics)', () => {
+    // `data: []` clears a series / declares an empty category axis — the
+    // sanitizer used to drop the field entirely, silently changing what the
+    // chart rendered.
+    const spec = repairGenuiSpec({ items: [echart({
+      option: { xAxis: { data: [] }, series: [{ data: [] }] },
+    })] })
+    const node = spec?.items[0] as { option?: { xAxis?: { data?: unknown[] }, series?: Array<{ data?: unknown[] }> } }
+    expect(node?.option?.xAxis?.data).toEqual([])
+    expect(node?.option?.series?.[0]?.data).toEqual([])
+  })
+
   it('caps nesting depth to maxEChartOptionDepth', () => {
     // Deep nesting beyond the limit causes the walk to return undefined at
     // the cutoff depth, which cascades up (each parent loses its only child
