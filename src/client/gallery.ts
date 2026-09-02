@@ -89,7 +89,7 @@ export const gallerySpec: GenuiSpec = {
       { title: '第一项', items: [{ type: 'json', value: { ok: true, count: 3 } }] },
       { title: '第二项', items: [{ type: 'code', lang: 'ts', code: 'export const x = 1' }] },
     ] },
-    { type: 'copy', label: '复制令牌', text: 'sk-1234567890' },
+    { type: 'copy', label: '复制命令', text: 'npm install @omdsh-dev/dsh-genui' },
     { type: 'plot', title: '波动叠加', xMin: -6.28, xMax: 6.28, series: [
       { expr: 'sin(x)', label: 'sin(x)', color: '#4f8ef7' },
       { expr: '0.8*cos(x)', label: 'cos', color: '#3ecf8e' },

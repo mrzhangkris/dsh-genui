@@ -1,6 +1,13 @@
 import type { GenuiChart, GenuiTable } from '../spec.ts';
 export declare const CHART_COLORS: string[];
 /**
+ * Themed accent for single-series charts/plots (host token first, blue-450
+ * hex fallback when the token is absent). One constant instead of the same
+ * fallback string repeated at every use site; EChartNode's readToken fallback
+ * carries the same hex.
+ */
+export declare const ACCENT_FALLBACK = "var(--dsw-alias-state-business-primary, #4f8ef7)";
+/**
  * Sortable numeric value of a cell. Human-written table cells are rarely
  * plain numbers, so the sort accepts the usual decorations:
  * `1,234` / `1，234`（千分位）、`1.2k`/`3M`/`5b`、`3.5万`/`2亿`、`0.3%`、

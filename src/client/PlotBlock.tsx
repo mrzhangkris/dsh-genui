@@ -9,6 +9,7 @@
  * curve in place. The plot itself supports drag-to-pan and wheel-to-zoom.
  */
 import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ACCENT_FALLBACK } from './blocks/charts.tsx'
 import { sampleExpr } from './safe-math.ts'
 import css from './PlotBlock.module.css'
 
@@ -231,7 +232,6 @@ export const PlotBlock = memo(function PlotBlock({
   const hi = view.yMax
   const plotW = WIDTH - PAD_L - PAD_R
   const plotH = HEIGHT - PAD_T - PAD_B
-  const fromX = (px: number): number => xMin + ((px - PAD_L) / plotW) * (xMax - xMin)
   const toX = (x: number): number => PAD_L + ((x - xMin) / (xMax - xMin)) * plotW
   const toY = (y: number): number => PAD_T + (1 - (y - lo) / (hi - lo)) * plotH
 
@@ -259,7 +259,7 @@ export const PlotBlock = memo(function PlotBlock({
   // v2.9 draw shapes: line (polyline), area (fill to the locked baseline),
   // scatter (dots only). Colors stay on the shared categorical palette.
   const renderSeries = (s: PlotSeries, i: number, points: string): ReactNode => {
-    const color = seriesColor(i, sampled.length, s.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)'
+    const color = seriesColor(i, sampled.length, s.color) ?? ACCENT_FALLBACK
     const kind = s.kind ?? 'line'
     if (kind === 'scatter') {
       const coords = points === '' ? [] : points.split(' ').map(pt => {
@@ -297,15 +297,35 @@ export const PlotBlock = memo(function PlotBlock({
     setView(prev => ({ xMin: d.xMin + dx, xMax: d.xMax + dx, yMin: prev.yMin, yMax: prev.yMax }))
   }
   const onPointerUp = (): void => { dragRef.current = null }
-  const onWheel = (e: React.WheelEvent): void => {
-    const span = xMax - xMin
-    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15
-    const next = span * factor
-    const rect = (e.currentTarget as Element).getBoundingClientRect()
-    const cx = fromX(((e.clientX - rect.left) / rect.width) * WIDTH)
-    const left = cx - ((cx - xMin) / span) * next
-    setView(prev => ({ xMin: left, xMax: left + next, yMin: prev.yMin, yMax: prev.yMax }))
-  }
+  // Wheel-to-zoom needs a NON-passive native listener: React attaches
+  // onWheel as a passive listener, where preventDefault() is a no-op — the
+  // page used to scroll underneath while the plot zoomed. The handler reads
+  // the latest view through a ref so the listener never goes stale.
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const viewRef = useRef(view)
+  viewRef.current = view
+  useEffect(() => {
+    const el = svgRef.current
+    if (el === null) return
+    const onWheelNative = (e: WheelEvent): void => {
+      e.preventDefault()
+      const { xMin: curMin, xMax: curMax } = viewRef.current
+      const span = curMax - curMin
+      const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15
+      const next = span * factor
+      // Keep the cursor's data coordinate fixed: the zoom anchors at the
+      // point under the pointer (screen px → plot px → data x).
+      const rect = el.getBoundingClientRect()
+      const px = ((e.clientX - rect.left) / rect.width) * WIDTH
+      const cx = curMin + ((px - PAD_L) / plotW) * (curMax - curMin)
+      const left = cx - ((cx - curMin) / span) * next
+      setView(prev => ({ xMin: left, xMax: left + next, yMin: prev.yMin, yMax: prev.yMax }))
+    }
+    el.addEventListener('wheel', onWheelNative, { passive: false })
+    return () => { el.removeEventListener('wheel', onWheelNative) }
+    // Re-bind when the conditional SVG (re)mounts; the view itself is read
+    // through viewRef so zoom stays correct without re-binding per pan.
+  }, [hasData, hasValidRange])
 
   const hasParams = series.some(s => (s.params?.length ?? 0) > 0)
 
@@ -314,6 +334,7 @@ export const PlotBlock = memo(function PlotBlock({
       {title !== undefined && <div className={css.title}>{title}</div>}
       {hasData && hasValidRange ? (
         <svg
+          ref={svgRef}
           width="100%"
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           role="img"
@@ -323,7 +344,6 @@ export const PlotBlock = memo(function PlotBlock({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={onPointerUp}
-          onWheel={onWheel}
         >
           {/* y grid */}
           {yTicks.map(t => (
@@ -427,7 +447,7 @@ export const PlotBlock = memo(function PlotBlock({
         <div className={css.legend}>
           {series.map((s, i) => (
             <span key={i} className={css.legendItem}>
-              <span className={css.legendSwatch} style={{ background: seriesColor(i, series.length, s.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)' }} />
+              <span className={css.legendSwatch} style={{ background: seriesColor(i, series.length, s.color) ?? ACCENT_FALLBACK }} />
               {s.label ?? s.expr}
             </span>
           ))}

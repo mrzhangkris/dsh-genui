@@ -131,3 +131,80 @@ describe('durable field value precedence (input/textarea)', () => {
     expect(saved?.fields?.f2).toBe('用户长文')
   })
 })
+
+describe('durable state flush on unmount (no lost last click)', () => {
+  it('flushes synchronously when unmounted inside the 300ms debounce window', () => {
+    // Pre-fix: the debounced save's cleanup only cancelled the timer, so an
+    // unmount within 300ms of the last interaction (the streaming→settled
+    // remount, or a page refresh) silently dropped it.
+    const KEY = 'session-c::flush'
+    const view = renderBlock(paper, KEY)
+    const group = view.container.querySelector('[role="radiogroup"]')!
+    fireEvent.click(group.querySelectorAll('input')[1]!) // choose 15
+    // NO timer advance — unmount immediately (inside the debounce window).
+    view.unmount()
+    const saved = loadBlockState(KEY)
+    expect(saved?.answers?.q1).toBe('15')
+  })
+
+  it('flushes on unmount after submit grading too', () => {
+    const KEY = 'session-c::flush-graded'
+    const view = renderBlock(paper, KEY)
+    const group = view.container.querySelector('[role="radiogroup"]')!
+    fireEvent.click(group.querySelectorAll('input')[1]!)
+    fireEvent.click(view.container.querySelector('[class*="submitRow"] button')!)
+    expect(view.container.querySelector('[data-genui-grade]')!.textContent).toContain('1 / 1')
+    view.unmount()
+    const saved = loadBlockState(KEY)
+    expect(saved?.locked).toBe(true)
+    expect(saved?.answers?.q1).toBe('15')
+    expect(saved?.meta?.q1?.answer).toBe(1)
+  })
+})
+
+describe('streaming→settled durable-state migration (fallbackStateKey)', () => {
+  it('a settled mount with an empty key migrates the streaming-era state', () => {
+    // The settle transition remounts the block under the settled source id;
+    // the streaming-era answers live under the document-key identity. The
+    // fallback read carries them over and re-saves under the settled key.
+    const streamingKey = 'f:s1:doc-key-7:fp1'
+    const settledKey = "f:s1:['assistant',3,0,1]:fp1"
+    saveBlockState(streamingKey, { answers: { q1: '15' } })
+    // Primary key has no stored state (first settled render after streaming).
+    expect(loadBlockState(settledKey)).toBeNull()
+
+    const view = render(<GenuiBlock spec={paper} stateKey={settledKey} fallbackStateKey={streamingKey} />)
+    // The migrated answer restores the graded interaction state: radio group
+    // shows the choice and submit is ready.
+    const group = view.container.querySelector('[role="radiogroup"]')!
+    const checked = group.querySelector('input:checked')
+    expect(checked).not.toBeNull()
+    expect((checked as HTMLInputElement).value === '15' || checked!.nextSibling?.textContent === '15').toBe(true)
+
+    // The migrated state was re-saved under the settled key (not only under
+    // the streaming key), so a later remount no longer needs the fallback.
+    view.unmount()
+    expect(loadBlockState(settledKey)?.answers?.q1).toBe('15')
+  })
+
+  it('an existing settled-key state always wins over the fallback', () => {
+    const streamingKey = 'f:s1:doc:fp2'
+    const settledKey = 'f:s1:src:fp2'
+    saveBlockState(streamingKey, { answers: { q1: '14' } })
+    saveBlockState(settledKey, { answers: { q1: '16' } })
+    const view = render(<GenuiBlock spec={paper} stateKey={settledKey} fallbackStateKey={streamingKey} />)
+    const group = view.container.querySelector('[role="radiogroup"]')!
+    const checked = group.querySelector('input:checked') as HTMLInputElement | null
+    expect(checked).not.toBeNull()
+    expect(checked!.nextSibling?.textContent).toBe('16')
+    view.unmount()
+    expect(loadBlockState(settledKey)?.answers?.q1).toBe('16')
+  })
+
+  it('no fallback → behavior unchanged (fresh state)', () => {
+    const KEY = 'session-d::no-fallback'
+    const view = renderBlock(paper, KEY)
+    expect(view.container.querySelector('[role="radiogroup"] input:checked')).toBeNull()
+    view.unmount()
+  })
+})

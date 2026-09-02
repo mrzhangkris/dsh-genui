@@ -19,6 +19,14 @@ export const CHART_COLORS = [
   'var(--dsw-static-deepseek-300)',
 ]
 
+/**
+ * Themed accent for single-series charts/plots (host token first, blue-450
+ * hex fallback when the token is absent). One constant instead of the same
+ * fallback string repeated at every use site; EChartNode's readToken fallback
+ * carries the same hex.
+ */
+export const ACCENT_FALLBACK = 'var(--dsw-alias-state-business-primary, #4f8ef7)'
+
 /** Series color: explicit color wins; multi-series auto-assign from the palette. */
 const seriesColor = (i: number, n: number, c?: string): string | undefined =>
   c ?? (n > 1 ? CHART_COLORS[i % CHART_COLORS.length] : undefined)
@@ -49,6 +57,10 @@ export function parseSortableNumber(v: unknown): number {
     s = s.slice(0, -1)
   }
   s = s.replace(/[,，\s]/g, '')
+  // A body of nothing but decorations ("¥", "%", "万", "-") must NOT read as
+  // the number 0 — Number('') === 0 silently turned such cells numeric and
+  // right-aligned/sorted them ahead of real text.
+  if (s === '') return NaN
   const n = Number(s)
   if (!Number.isFinite(n)) return NaN
   return n * mult
@@ -174,7 +186,7 @@ export const BarsNode = memo(function BarsNode({ chart }: { chart: GenuiChart })
                         className={css.groupedFill}
                         style={{
                           height: `${h}%`,
-                          background: seriesColor(si, grouped.length, s.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)',
+                          background: seriesColor(si, grouped.length, s.color) ?? ACCENT_FALLBACK,
                         }}
                       />
                     </div>
@@ -303,7 +315,7 @@ export const DonutNode = memo(function DonutNode({ chart }: { chart: GenuiChart 
               key={i}
               cx="60" cy="60" r={R} fill="none" strokeWidth="14"
               className={css.donutSeg}
-              style={{ stroke: seriesColor(i, data.length, d.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)' }}
+              style={{ stroke: seriesColor(i, data.length, d.color) ?? ACCENT_FALLBACK }}
               strokeDasharray={`${len} ${C - len}`}
               strokeDashoffset={-offset}
               transform="rotate(-90 60 60)"
@@ -320,7 +332,7 @@ export const DonutNode = memo(function DonutNode({ chart }: { chart: GenuiChart 
       <div className={css.donutLegend}>
         {data.map((d, i) => (
           <span key={i} className={css.legendItem}>
-            <span className={css.legendSwatch} style={{ background: seriesColor(i, data.length, d.color) ?? 'var(--dsw-alias-state-business-primary, #4f8ef7)' }} />
+            <span className={css.legendSwatch} style={{ background: seriesColor(i, data.length, d.color) ?? ACCENT_FALLBACK }} />
             {d.label} · {String(d.value)}
           </span>
         ))}

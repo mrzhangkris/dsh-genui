@@ -22,6 +22,15 @@ export interface GenuiBlockProps {
      */
     stateKey?: string | undefined;
     /**
+     * v2.9: secondary durable-state key consulted ONCE at mount when the
+     * primary key has no stored state. The streaming→settled transition remounts
+     * the block (the React key changes from the document key to the settled
+     * source id), and the streaming-era key differs — without this fallback the
+     * user's mid-stream answers vanished at settle. The migrated state is
+     * re-saved under the primary key, so the fallback is read exactly once.
+     */
+    fallbackStateKey?: string | undefined;
+    /**
      * v2.8: human-readable spec problems found by validation after repair
      * (e.g. a `children` field silently ignored by an `items`-based node, an
      * unknown type). Repaired specs still render — the amber bar tells the

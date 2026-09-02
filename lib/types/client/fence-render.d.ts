@@ -60,6 +60,18 @@ export declare function resolveGenuiSpec(raw: string, context?: GenuiFenceContex
 export interface ResolvedGenuiSpec {
     spec: GenuiSpec | null;
     warnings: string[];
+    /**
+     * Whole-body completeness of the adopted parse: true when the raw body
+     * parses as-is OR tier-1 text repair heals it into a WHOLE-body parse
+     * (trailing comma / unescaped quote — the author's full text is present).
+     * False for prefix-closed partials (streaming truncation) and tier-2
+     * bracket completions (a settled-but-truncated body cannot be told apart
+     * from a missing-closer typo, so both stay conservatively incomplete).
+     * The `panel append` gate consumes this instead of re-parsing the raw body:
+     * gating on `isCompleteJson(raw)` used to silently drop appends whose only
+     * defect was a repairable trailing comma.
+     */
+    complete: boolean;
 }
 export declare function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContext): ResolvedGenuiSpec;
 /**

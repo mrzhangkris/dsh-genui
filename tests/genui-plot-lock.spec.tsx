@@ -33,3 +33,17 @@ describe('plot y-axis lock', () => {
     expect(polyAfter).not.toBe(polyBefore)
   })
 })
+
+describe('plot wheel zoom does not scroll the page', () => {
+  it('prevents the wheel default (non-passive native listener)', () => {
+    // React's onWheel is a passive listener, so preventDefault() inside it is
+    // a no-op and the page scrolled under the plot while it zoomed. The
+    // handler is now a native non-passive listener on the SVG.
+    const { container } = render(<PlotBlock series={[{ expr: 'sin(x)' }]} xMin={-6.28} xMax={6.28} />)
+    const svg = container.querySelector('svg')!
+    expect(svg).not.toBeNull()
+    const wheel = new WheelEvent('wheel', { deltaY: 120, cancelable: true })
+    svg.dispatchEvent(wheel)
+    expect(wheel.defaultPrevented).toBe(true)
+  })
+})

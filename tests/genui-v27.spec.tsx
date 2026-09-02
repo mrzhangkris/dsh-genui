@@ -9,11 +9,10 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GenuiActionContext } from '../src/client/action-context.ts'
-import { GenuiBlock, GENUI_ACTION_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
+import { GenuiBlock, GENUI_ACTION_DEBOUNCE_MS, SAVE_DEBOUNCE_MS } from '../src/client/GenuiBlock.tsx'
 import { fingerprint, loadBlockState, saveBlockState, clearBlockState } from '../src/client/interaction-store.ts'
 
-/** 300ms durable-save debounce (see GenuiBlock). */
-const SAVE_MS = 300
+
 
 const paper = {
   items: [
@@ -69,7 +68,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     fireEvent.click(groups[0]!.querySelectorAll('input')[1]!) // q1: 15 ✓
     fireEvent.click(groups[1]!.querySelectorAll('input')[2]!) // q2: 北京 ✓
     fireEvent.click(first.container.querySelector('[class*="submitRow"] button')!) // 交卷 → local grade
-    act(() => { vi.advanceTimersByTime(SAVE_MS) }) // durable save settles
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) }) // durable save settles
     first.unmount()
 
     // "refresh": a brand-new mount with the same stateKey restores everything
@@ -87,7 +86,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     const first = renderBlock(spec, KEY)
     const input = first.container.querySelector('input') as HTMLInputElement
     fireEvent.change(input, { target: { value: '小明' } })
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     const second = renderBlock(spec, KEY)
@@ -100,7 +99,7 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     const first = renderBlock(paper, KEY_A)
     fireEvent.click(first.container.querySelectorAll('[role="radiogroup"] input')[1]!)
     fireEvent.click(first.container.querySelectorAll('[role="radiogroup"] input')[2]!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     // different stateKey (different content) → no restore, submit disabled
@@ -117,10 +116,10 @@ describe('v2.7: durable restore (refresh / replay)', () => {
     fireEvent.click(groups[0]!.querySelectorAll('input')[1]!)
     fireEvent.click(groups[1]!.querySelectorAll('input')[2]!)
     fireEvent.click(first.container.querySelector('[class*="submitRow"] button')!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     // 重新作答 → cleared + saved
     fireEvent.click(first.container.querySelector('[data-genui-grade] button')!)
-    act(() => { vi.advanceTimersByTime(SAVE_MS) })
+    act(() => { vi.advanceTimersByTime(SAVE_DEBOUNCE_MS) })
     first.unmount()
 
     const second = renderBlock(paper, KEY)
@@ -201,5 +200,71 @@ describe('v2.7: form submit semantics', () => {
     expect(actions).toEqual([['grade', {
       type: 'submit', answers: { q1: 'B' }, fields: { note: '已核对' }, total: 1, answered: 1,
     }]])
+  })
+})
+
+describe('spec updates drive un-interacted controls (panel replace semantics)', () => {
+  // The mount-only initializers (defaultChecked / useState(node.checked) / …)
+  // used to freeze the first render's value forever: a model re-render that
+  // changed `checked`/`selected` never reached the UI. The override pattern
+  // keeps the control following the spec until the user interacts.
+  const rerender = (view: { rerender: (ui: React.ReactElement) => void }, spec: unknown, onAction?: (a: string, p: Record<string, unknown>) => void) => {
+    view.rerender(
+      <GenuiActionContext.Provider value={onAction ?? (() => {})}>
+        <GenuiBlock spec={spec as never} />
+      </GenuiActionContext.Provider>,
+    )
+  }
+
+  it('checkbox follows spec checked updates until the user interacts', () => {
+    const specA = { items: [{ type: 'checkbox', label: '自动保存' }] }
+    const specB = { items: [{ type: 'checkbox', label: '自动保存', checked: true }] }
+    const view = renderBlock(specA, undefined)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+    rerender(view, specB)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(true)
+    // User interaction wins from now on: clicking toggles OFF (true → false),
+    // and that choice survives further spec updates back to checked:true.
+    fireEvent.click(view.container.querySelector('input')!)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+    rerender(view, specB)
+    expect((view.container.querySelector('input') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('switch follows spec checked updates until the user toggles', () => {
+    const specA = { items: [{ type: 'switch', label: '通知' }] }
+    const specB = { items: [{ type: 'switch', label: '通知', checked: true }] }
+    const view = renderBlock(specA, undefined)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    rerender(view, specB)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('true')
+    // Toggling OFF wins over any later spec update.
+    fireEvent.click(view.container.querySelector('[role="switch"]')!)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+    rerender(view, specB)
+    expect(view.container.querySelector('[role="switch"]')!.getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('ungrouped radio follows spec selected updates until the user picks', () => {
+    const opts = { options: ['A', 'B', 'C'] }
+    const view = renderBlock({ items: [{ type: 'radio', label: '主题', ...opts }] }, undefined)
+    const inputs = view.container.querySelectorAll('[role="radiogroup"] input')
+    expect((inputs[0] as HTMLInputElement).checked).toBe(false)
+    rerender(view, { items: [{ type: 'radio', label: '主题', ...opts, selected: 2 }] })
+    expect((view.container.querySelectorAll('[role="radiogroup"] input')[2] as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(view.container.querySelectorAll('[role="radiogroup"] input')[0]!)
+    rerender(view, { items: [{ type: 'radio', label: '主题', ...opts, selected: 1 }] })
+    expect((view.container.querySelectorAll('[role="radiogroup"] input')[0] as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('input follows spec value updates (no id, no durable registration) until edited', () => {
+    const view = renderBlock({ items: [{ type: 'input', label: '关键词' }] }, undefined)
+    const input = view.container.querySelector('input') as HTMLInputElement
+    expect(input.value).toBe('')
+    rerender(view, { items: [{ type: 'input', label: '关键词', value: '预填' }] })
+    expect(input.value).toBe('预填')
+    fireEvent.change(input, { target: { value: '用户改' } })
+    rerender(view, { items: [{ type: 'input', label: '关键词', value: '又改' }] })
+    expect(input.value).toBe('用户改')
   })
 })

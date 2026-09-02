@@ -1,5 +1,5 @@
 import type { AnswersState, GenuiBlockProps, QuestionMeta } from './state.ts';
-import type { GenuiInput, GenuiRadio, GenuiSelect, GenuiSlider, GenuiSubmit, GenuiSwitch, GenuiTextarea } from '../spec.ts';
+import type { GenuiCheckbox, GenuiInput, GenuiRadio, GenuiSelect, GenuiSlider, GenuiSubmit, GenuiSwitch, GenuiTextarea } from '../spec.ts';
 export declare function RadioNode({ node, onAction, answers }: {
     node: GenuiRadio;
     onAction?: GenuiBlockProps['onAction'];
@@ -20,7 +20,16 @@ export declare function SubmitNode({ node, onAction, answers }: {
     onAction?: GenuiBlockProps['onAction'];
     answers?: AnswersState | undefined;
 }): import("react").JSX.Element;
-/** Switch: toggle with local state. */
+/** Checkbox: follows the spec's `checked` until the user interacts — a
+ * user interaction (override) wins from then on, even across spec updates
+ * (a model re-render must never clobber what the user chose). The former
+ * `defaultChecked` mount-only initialization ignored spec updates entirely. */
+export declare function CheckboxNode({ node, onAction }: {
+    node: GenuiCheckbox;
+    onAction?: GenuiBlockProps['onAction'];
+}): import("react").JSX.Element;
+/** Switch: toggle with local state. Follows the spec's `checked` until the
+ * user interacts (same override semantics as CheckboxNode). */
 export declare function SwitchNode({ node, onAction }: {
     node: GenuiSwitch;
     onAction?: GenuiBlockProps['onAction'];
@@ -73,7 +82,8 @@ export declare function InputNode({ node, onAction, answers }: {
 /** Textarea: multi-line input; with `action`, blurring sends the value and
  *  Ctrl/Cmd+Enter submits immediately. Controlled when `id` is set (durable
  *  value + submit collection). Ctrl/Cmd+Enter during IME composition never
- *  submits. */
+ *  submits. Follows spec updates until the user edits (same dirty semantics
+ *  as InputNode). */
 export declare function TextareaNode({ node, onAction, answers }: {
     node: GenuiTextarea;
     onAction?: GenuiBlockProps['onAction'];

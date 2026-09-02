@@ -7,7 +7,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import css from '../GenuiBlock.module.css'
 import { GENUI_LIMITS } from '../guard.ts'
 import type { AnswersState, GenuiBlockProps, QuestionMeta } from './state.ts'
-import type { GenuiInput, GenuiRadio, GenuiSelect, GenuiSlider, GenuiSubmit, GenuiSwitch, GenuiTextarea } from '../spec.ts'
+import type { GenuiCheckbox, GenuiInput, GenuiRadio, GenuiSelect, GenuiSlider, GenuiSubmit, GenuiSwitch, GenuiTextarea } from '../spec.ts'
 
 export function RadioNode({ node, onAction, answers }: {
   node: GenuiRadio
@@ -27,7 +27,13 @@ export function RadioNode({ node, onAction, answers }: {
   const restoredIndex = group !== undefined && answers?.answers[group] !== undefined
     ? options.indexOf(answers!.answers[group]!)
     : -1
-  const [selected, setSelected] = useState<number | null>(restoredIndex >= 0 ? restoredIndex : (node.selected ?? null))
+  // Spec-provided default: a durable answer (restored) wins, then the model's
+  // `selected`. Follows spec updates until the user picks (override), then the
+  // user's choice wins even across re-renders. The parent key includes the
+  // reset round, so 重新作答 remounts this radio with a clean selection.
+  const specSelected = restoredIndex >= 0 ? restoredIndex : (node.selected !== undefined && options[node.selected] !== undefined ? node.selected : null)
+  const [picked, setPicked] = useState<number | null>(null)
+  const selected = picked ?? specSelected
   const uid = useId()
   const locked = grouped && answers?.locked === true
   // Register question metadata for local grading (mount + when the question
@@ -59,7 +65,7 @@ export function RadioNode({ node, onAction, answers }: {
             checked={selected === i}
             disabled={locked}
             onChange={() => {
-              setSelected(i)
+              setPicked(i)
               if (grouped) {
                 // Aggregation mode: record, do NOT round-trip per click.
                 answers?.setAnswer(group, opt)
@@ -206,9 +212,40 @@ export function SubmitNode({ node, onAction, answers }: {
   )
 }
 
-/** Switch: toggle with local state. */
+/** Checkbox: follows the spec's `checked` until the user interacts — a
+ * user interaction (override) wins from then on, even across spec updates
+ * (a model re-render must never clobber what the user chose). The former
+ * `defaultChecked` mount-only initialization ignored spec updates entirely. */
+export function CheckboxNode({ node, onAction }: {
+  node: GenuiCheckbox
+  onAction?: GenuiBlockProps['onAction']
+}) {
+  const action = node.action
+  const [override, setOverride] = useState<boolean | null>(null)
+  const checked = override ?? node.checked === true
+  return (
+    <label className={css.checkbox}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => {
+          const next = e.currentTarget.checked
+          setOverride(next)
+          if (action !== undefined && onAction !== undefined) {
+            onAction(action, { type: 'checkbox', checked: next })
+          }
+        }}
+      />
+      <span>{node.label}</span>
+    </label>
+  )
+}
+
+/** Switch: toggle with local state. Follows the spec's `checked` until the
+ * user interacts (same override semantics as CheckboxNode). */
 export function SwitchNode({ node, onAction }: { node: GenuiSwitch; onAction?: GenuiBlockProps['onAction'] }) {
-  const [on, setOn] = useState(node.checked === true)
+  const [override, setOverride] = useState<boolean | null>(null)
+  const on = override ?? node.checked === true
   const action = node.action
   return (
     <label className={css.switchRow}>
@@ -220,7 +257,7 @@ export function SwitchNode({ node, onAction }: { node: GenuiSwitch; onAction?: G
         className={`${css.switch} ${on ? css.switchOn : ''}`}
         onClick={() => {
           const next = !on
-          setOn(next)
+          setOverride(next)
           if (action !== undefined && onAction !== undefined) onAction(action, { type: 'switch', checked: next })
         }}
       >
@@ -344,7 +381,11 @@ export function SelectNode({ node, onAction, answers }: {
     : node.selected !== undefined && options[node.selected] !== undefined
       ? options[node.selected]!
       : null
-  const [value, setValue] = useState<string | null>(defaultValue)
+  // Follows the spec default until the user picks (override), then the user's
+  // choice wins across spec updates — the mount-only initializer used to
+  // freeze the first default forever.
+  const [picked, setPicked] = useState<string | null | undefined>(undefined)
+  const value = picked !== undefined ? picked : defaultValue
   // Field invariant: a spec-provided default registers at mount.
   const mounted = useRef(false)
   useEffect(() => {
@@ -368,7 +409,7 @@ export function SelectNode({ node, onAction, answers }: {
         value={value ?? ''}
         onChange={e => {
           const v = e.currentTarget.value
-          setValue(v)
+          setPicked(v)
           if (id !== undefined) answers?.setField(id, v)
           send(v)
         }}
@@ -396,17 +437,14 @@ export function InputNode({ node, onAction, answers }: {
   const action = node.action
   const id = node.id
   const secret = node.inputType === 'password'
-  // Initial value: spec default, else durable state (restored after refresh).
-  // Secrets restore as blank: a password that survives a refresh would be a
-  // stored secret, which is exactly what the boundary forbids.
-  const [value, setValue] = useState<string>(() => {
-    if (secret) return ''
-    // Durable user edit WINS over the spec default (same precedence as
-    // select/slider): the old `node.value ?? fields[id]` order made every
-    // refresh revert the field to the model-authored value.
-    const restored = id !== undefined ? answers?.fields[id] : undefined
-    return restored ?? node.value ?? ''
-  })
+  // Edited value wins once the user typed (dirty flag); before that the field
+  // follows spec updates — a mount-only initializer used to freeze the first
+  // model-authored value forever (panel replace could never update it).
+  // Durable user edit (fields[id]) still beats the spec default, and secrets
+  // restore as blank.
+  const [edited, setEdited] = useState<string | null>(null)
+  const baseValue = secret ? '' : (id !== undefined ? answers?.fields[id] : undefined) ?? node.value ?? ''
+  const value = edited ?? baseValue
   // Last value actually DELIVERED to the model: blur only sends when the
   // value changed since the last delivery (a focus-in/focus-out with no edit
   // used to fire a pointless action round trip). Seeded with the mount value
@@ -445,7 +483,7 @@ export function InputNode({ node, onAction, answers }: {
         value={value}
         onChange={e => {
           const v = e.currentTarget.value
-          setValue(v)
+          setEdited(v)
           if (id !== undefined) answers?.setField(id, v)
         }}
         onBlur={() => {
@@ -467,7 +505,8 @@ export function InputNode({ node, onAction, answers }: {
 /** Textarea: multi-line input; with `action`, blurring sends the value and
  *  Ctrl/Cmd+Enter submits immediately. Controlled when `id` is set (durable
  *  value + submit collection). Ctrl/Cmd+Enter during IME composition never
- *  submits. */
+ *  submits. Follows spec updates until the user edits (same dirty semantics
+ *  as InputNode). */
 export function TextareaNode({ node, onAction, answers }: {
   node: GenuiTextarea
   onAction?: GenuiBlockProps['onAction']
@@ -475,13 +514,9 @@ export function TextareaNode({ node, onAction, answers }: {
 }) {
   const action = node.action
   const id = node.id
-  const [value, setValue] = useState<string>(() => {
-    // Durable user edit WINS over the spec default (same precedence as
-    // select/slider): the old `node.value ?? fields[id]` order made every
-    // refresh revert the textarea to the model-authored value.
-    const restored = id !== undefined ? answers?.fields[id] : undefined
-    return restored ?? node.value ?? ''
-  })
+  const [edited, setEdited] = useState<string | null>(null)
+  const baseValue = (id !== undefined ? answers?.fields[id] : undefined) ?? node.value ?? ''
+  const value = edited ?? baseValue
   // Last value delivered to the model: blur sends only on change. Seeded
   // with the mount value so an unedited blur stays silent.
   const lastSent = useRef<string | null>(value)
@@ -513,7 +548,7 @@ export function TextareaNode({ node, onAction, answers }: {
         value={value}
         onChange={e => {
           const v = e.currentTarget.value
-          setValue(v)
+          setEdited(v)
           if (id !== undefined) answers?.setField(id, v)
         }}
         onBlur={() => {

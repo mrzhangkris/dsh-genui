@@ -683,6 +683,30 @@ describe('repair/validate: table headers → columns alias', () => {
     })
     expect(spec?.items[0]).toEqual({ type: 'table', columns: ['名称'], rows: [['张三']] })
   })
+
+  it('repairs a data-only table into rows (model-shaped rows flatten too)', () => {
+    const spec = repairGenuiSpec({
+      items: [{ type: 'table', columns: ['指标', '值'], data: [['延迟', '92ms'], ['吞吐', '1.2k']] }],
+    })
+    expect(spec?.items[0]).toEqual({ type: 'table', columns: ['指标', '值'], rows: [['延迟', '92ms'], ['吞吐', '1.2k']] })
+  })
+
+  it('validator accepts data as a rows alias (no false amber warning)', () => {
+    // The repaired spec renders, so the validator must not report the body
+    // broken — that mismatch used to surface a misleading warning bar on a
+    // fully working table.
+    const result = validateGenuiSpec({
+      items: [{ type: 'table', columns: ['a', 'b'], data: [['1', '2']] }],
+    })
+    expect(result.ok).toBe(true)
+    expect(result.errors).toEqual([])
+  })
+
+  it('still reports a table missing both rows and data', () => {
+    const result = validateGenuiSpec({ items: [{ type: 'table', columns: ['a'] }] })
+    expect(result.ok).toBe(false)
+    expect(result.errors.join('\n')).toContain('rows')
+  })
 })
 
 describe('repair/validate: callout text→content & type_→tone aliases', () => {

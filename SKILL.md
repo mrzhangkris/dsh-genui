@@ -35,7 +35,7 @@ description: |
 布局：`text` `row` `col` `grid` `card` `divider` `spacer`
 展示：`stat` `badge` `progress` `list` `table` `keyvalue` `avatar` `timeline` `file-tree` `breadcrumb` `diff` `json` `code` `callout` `steps`
 图表：`chart`（bars/line/donut，可多序列）`plot`（数学函数图）`echart`（preset 快捷图或原生 option）
-交互：`button` `input` `select` `checkbox` `radio` `link` `switch` `textarea` `tabs` `accordion` `copy`
+交互：`button` `input` `select` `checkbox` `radio` `link` `switch` `slider` `textarea` `tabs` `accordion` `copy`
 高级：`mermaid`（流程图/时序/甘特等）`scene3d`（3D WebGL）`quiz`（点选判题 + 解析 + 重试）`diagram`（编辑级架构/流程图，27 种 kind）
 
 **名字对照警告（写错静默失效）**：`tone` 的取值集合**因组件而异**——`callout` 的 tone 是 `info|success|warning|error`，`badge` 的 tone 是 `success|warn|danger|accent`。`warn` ≠ `warning`、`danger` ≠ `error`：给 callout 写 `warn`、给 badge 写 `warning`/`error` 都**不会报错**，只会静默失效（tone 不生效）——写前对照下方各组件的字段定义。
@@ -69,7 +69,7 @@ description: |
 ### 图表
 - chart: `{"type":"chart","kind":"bars|line|donut","data":[{"label":"...","value":n,"color":"#hex?"}],"series":[...]?}` — bars 默认；line 趋势；donut 占比；series 字段 = 分组柱状图；负值数据：柱高为 0 但数值标注照显、donut 负值记 0 弧长（line 正常画负区间）
 - plot: `{"type":"plot","series":[{"expr":"a*sin(b*x)","label":"...","color":"#hex?","params":[{"name":"a","value":1,"min":0,"max":5,"animateTo":3,"durationMs":4000,"loop":true},{"name":"b","value":1,"min":0.5,"max":5}]}],"xMin":-6.28,"xMax":6.28,"title":"..."}` — SVG 函数图；**series 可带 `"kind":"line|area|scatter"`**（缺省 line；area 填色到基线；scatter 散点）；**params 渲染成实时滑块**（拖动即时重绘，**y 轴锁定**=只变曲线不变数轴）；**animateTo 参数会显示播放按钮**（自动动画演示）；SVG 可拖拽平移、滚轮缩放；表达式支持 sin/cos/tan/asin/acos/atan/sqrt/cbrt/exp/log/ln/abs/floor/ceil/round/min/max/pow，常量 pi/e/tau，变量 x（其他字母=参数）
-- echart: `{"type":"echart","preset":"bar|line|area|pie|scatter","data":[{"name":"...","value":n}]}` 或 `{"type":"echart","option":{...原生 ECharts option...}}` — `preset` 快捷方式（配 `data`）与原生 `option` 二选一
+- echart: `{"type":"echart","preset":"bar|line|area|pie|scatter","data":[...],"series":[...]?}` — ECharts 主题化图表，`data`/`series` 格式同 `chart`（简写模式）；需要 dataZoom/visualMap/堆叠/仪表盘等高级能力时改用 `"option":{标准 ECharts option}`（全功能模式，option/data/series 至少给一个）。`title`、`height`(100–800) 可选。option 内的字符串值不得含 HTML 标签、`on*=` 事件属性或 `url()`（会被安全过滤剔除该字段）
 
 ### 交互
 **本地优先（v2.6）**：UI 自己能做的状态变化——判卷、判题、重置、展开、折叠、切换、选中、排序——一律本地即时完成，**零模型往返**。action 只用于必须模型参与的事（生成新内容、执行工具、下一步建议）。
@@ -101,7 +101,7 @@ description: |
 - mermaid: `{"type":"mermaid","code":"graph TD\nA-->B"}`（示例里的 `\n` 是 JSON 换行转义，解析后即真实换行——用来分隔图语句；**节点标签内**换行才用 `<br/>`）— flowchart/sequence/class/gantt/pie/er/state/journey；主题自动跟随宿主（暗/浅）。**节点文本三戒**：① 含 `()`/`[]`/特殊字符必须加引号 `["text"]`（裸写会被解析成圆柱体等形状语法，整图降级显示源码）② 节点内换行只用 `<br/>`（`\n` 会显示为字面文本）③ style 颜色写六位 hex（`#4a6` 简写部分渲染器不认）
 - scene3d: `{"type":"scene3d","title":"...","meshes":[{"shape":"box|sphere|cone|cylinder|torus","color":"#hex?","size":n|[w,h,d]?,"position":[x,y,z]?,"rotation":[rx,ry,rz]?,"scale":n?|[...]?}],"ambient":0-2?,"background":"#hex?"}` — 3D WebGL，可拖拽旋转、滚轮缩放；mesh 数量 1–5 个
 - quiz: `{"type":"quiz","question":"...","options":[{"label":"...","correct":true?,"feedback":"..."?}],"explanation":"...","id":"..."?,"action":"answer"?}` — 教学问答：点选即判题、可重试；`id` 变化时重置；带 action 时答案同时回传模型
-- diagram: `{"type":"diagram","kind":"...","nodes":[...],"edges":[...]}` — 编辑级架构/流程图（27 种 kind），节点与连线由 `nodes`/`edges` 描述
+- diagram: `{"type":"diagram","kind":"...","nodes":[{"id":"a","label":"网关","sub":"API"?,"type":"focal|backend|store|external|input|optional|security"?}],"edges":[{"from":"a","to":"b","label":"调用"?,"kind":"solid|dashed|accent|link"?}]?,"zones":[{"label":"核心区"}]?,"variant":"light|dark|editorial"?,"title":"..."?}` — 编辑级 SVG 架构图（正交连线、直角圆肘、4px 网格）。27 种 kind：**架构类**（`architecture` `it-state` `high-level` `process` `medallion` `data-flow` `dp-integration`）节点带 `x`/`y`/`w`/`h` 显式定位；**其余 kind**（`flowchart` `sequence` `state` `er` `timeline` `swimlane` `quadrant` `radar` `loop` `nested` `tree` `org-chart` `layers` `venn` `pyramid` `bar` `line` `gantt` `scatter` `dp-security-matrix`）只给 `label` 自动布局。预算：节点 ≤9、边 ≤12、区域 ≤3、`focal` 强调节点 ≤2、边标签 ≤14 字符
 
 ## 什么时候用：内容类型 → 组件映射
 
@@ -122,6 +122,9 @@ description: |
 | 数学函数 / 曲线关系 | `plot`（可带参数滑块、动画） |
 | 需要用户操作 / 筛选 / 反馈 | `button`、`input`、`select`、`radio`、`switch`、`tabs` |
 | 3D 物体 / 空间布局 | `scene3d` |
+| 音视频素材演示 | `audio`、`video` |
+| 高级图表（堆叠/缩放/仪表盘等 ECharts 全功能） | `echart` |
+| 架构图 / 系统组成 / 数据流（编辑级） | `diagram` |
 
 **别用的情况**：一句话能说清的事、纯闲聊、用户明确说不要 UI、以及"为了炫技硬塞"——组件服务内容，不是内容服务组件。
 

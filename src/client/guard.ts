@@ -1377,7 +1377,12 @@ function sanitizeEChartOption(v: unknown, depth: number, budget: EChartSanitizeB
       // their positions or every later label/data point would shift left.
       arr.push(s !== undefined ? s : null)
     }
-    return arr.length > 0 ? arr : undefined
+    // An EMPTY array is a legal ECharts value with real semantics (e.g.
+    // `data: []` clears a series / declares an empty category axis) — it
+    // used to be dropped, which removed the field and silently changed
+    // what the chart rendered. (Empty OBJECTS still drop: the depth-budget
+    // cascade relies on empty → undefined, see the depth-cap test.)
+    return arr
   }
   const o = obj(v)
   if (o === undefined) return undefined
@@ -1712,9 +1717,11 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       }
       break
     case 'table':
-      // `headers` alias mirrors repair: a headers-only table is valid.
+      // `headers`→`columns` and `data`→`rows` aliases mirror repair (and the
+      // known-field table above): a table healed from either alias is valid,
+      // and validating items-only used to report working specs as broken.
       if (!Array.isArray(v.columns) && !Array.isArray((v as Record<string, unknown>).headers)) errors.push(`${at}: type 'table' requires columns (array)`)
-      if (!Array.isArray(v.rows)) errors.push(`${at}: type 'table' requires rows (array)`)
+      if (!Array.isArray(v.rows) && !Array.isArray((v as Record<string, unknown>).data)) errors.push(`${at}: type 'table' requires rows (array)`)
       break
     case 'chart':
       if (!Array.isArray(v.data) && !Array.isArray(v.points) && !Array.isArray(v.series)) errors.push(`${at}: type 'chart' requires data or series (array)`)

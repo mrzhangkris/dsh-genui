@@ -152,8 +152,13 @@ export function repairFenceJson(raw: string): { text: string; repairs: number } 
       }
       continue
     }
-    if (ch === ',') {
-      // Trailing comma before `}` / `]` / end of input → drop it.
+    if (!inString && ch === ',') {
+      // Trailing comma before `}` / `]` / end of input → drop it. The
+      // `!inString` guard is load-bearing: a `,` INSIDE a string value whose
+      // next non-space char happens to be `}`/`]` (e.g. "甲,]乙") is string
+      // content, not a trailing comma — dropping it silently rewrites the
+      // author's text. completeFenceJson has the same guard structurally (its
+      // inString block swallows every non-quote character first).
       let j = i + 1
       while (j < raw.length && (raw[j] === ' ' || raw[j] === '\t' || raw[j] === '\n' || raw[j] === '\r')) j++
       const next = j < raw.length ? raw[j] : ''

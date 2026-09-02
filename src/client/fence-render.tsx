@@ -119,7 +119,10 @@ const FENCE_ERROR_STYLE: CSSProperties = {
   borderRadius: 6,
   background: 'rgba(239, 68, 68, 0.14)',
   border: '1px solid rgba(239, 68, 68, 0.4)',
-  color: '#f87171',
+  // Host error token (same one DiffBlock uses), with the calibrated red as
+  // fallback for token-less surfaces; the rgba tint/border keep their hex
+  // approximations (the host exposes no error-tint token).
+  color: 'var(--dsw-alias-state-error-primary, #f87171)',
   fontSize: 12,
   lineHeight: 1.55,
   whiteSpace: 'pre-wrap',
@@ -245,6 +248,18 @@ export function resolveGenuiSpec(raw: string, context?: GenuiFenceContext): Genu
 export interface ResolvedGenuiSpec {
   spec: GenuiSpec | null
   warnings: string[]
+  /**
+   * Whole-body completeness of the adopted parse: true when the raw body
+   * parses as-is OR tier-1 text repair heals it into a WHOLE-body parse
+   * (trailing comma / unescaped quote — the author's full text is present).
+   * False for prefix-closed partials (streaming truncation) and tier-2
+   * bracket completions (a settled-but-truncated body cannot be told apart
+   * from a missing-closer typo, so both stay conservatively incomplete).
+   * The `panel append` gate consumes this instead of re-parsing the raw body:
+   * gating on `isCompleteJson(raw)` used to silently drop appends whose only
+   * defect was a repairable trailing comma.
+   */
+  complete: boolean
 }
 
 export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContext): ResolvedGenuiSpec {
@@ -263,7 +278,13 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
   //     that case). A streaming half fails whole-body JSON.parse, so it
   //     stays suppressed. Short-circuit keeps the conversation path free of
   //     an extra parse when source already proves settledness.
-  const settled = context?.source !== undefined || isCompleteJson(raw)
+  const wholeRaw = isCompleteJson(raw)
+  const settled = context?.source !== undefined || wholeRaw
+  // Whole-body completeness for the append gate (see ResolvedGenuiSpec).
+  // Computed once here so both render channels share the exact same verdict;
+  // the `settled &&` short-circuit skips the repair scan mid-stream (a
+  // streaming half never publishes an append anyway — no source exists).
+  const complete = settled && (wholeRaw || repairFenceJson(raw) !== null)
   const parsed = parsePartialGenuiSpec(raw)
   let spec = parsed === null ? null : repairGenuiSpec(parsed)
   // Warnings reflect the ORIGINAL parsed body when it was used as-is;
@@ -293,7 +314,7 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
       }
     }
   }
-  return { spec, warnings }
+  return { spec, warnings, complete }
 }
 
 /** The durable-state GenuiBlock for one inline fence: stateKey = session +
@@ -310,25 +331,39 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
  * comparator stringifies both prop specs again — during streaming that
  * tripled the serialization of a growing tree. Specs are immutable between
  * renders, so identity is a sound cache key. */
-function FingerprintedGenuiBlock({ sessionId, sourceKey, spec, warnings }: {
+function FingerprintedGenuiBlock({ sessionId, sourceKey, docKey, spec, warnings }: {
   sessionId: string | undefined
+  /** Stable identity: the settled source id once settled, the document key while streaming. */
   sourceKey: string
+  /** The document-key identity — constant across the streaming→settled remount. */
+  docKey: string
   spec: GenuiSpec
   warnings: string[]
 }): ReactNode {
   const memo = useRef<{ readonly spec: GenuiSpec; readonly fingerprint: string } | null>(null)
   let stateKey: string | undefined
+  let fallbackStateKey: string | undefined
   if (sessionId !== undefined) {
     if (memo.current === null || memo.current.spec !== spec) {
       memo.current = { spec, fingerprint: JSON.stringify(spec) }
     }
-    stateKey = fenceStateKey(sessionId, sourceKey, memo.current.fingerprint)
+    const fingerprint = memo.current.fingerprint
+    stateKey = fenceStateKey(sessionId, sourceKey, fingerprint)
+    // Streaming→settled migration: the settle remount swaps the durable
+    // identity from the document key to the settled source id, and the
+    // user's mid-stream answers live under the document-key identity — the
+    // fallback lets the settled mount migrate them (GenuiBlock reads it
+    // once at mount and re-saves under the primary key).
+    if (sourceKey !== docKey) {
+      fallbackStateKey = fenceStateKey(sessionId, docKey, fingerprint)
+    }
   }
-  return <GenuiBlock spec={spec} warnings={warnings} stateKey={stateKey} />
+  return <GenuiBlock spec={spec} warnings={warnings} stateKey={stateKey} fallbackStateKey={fallbackStateKey} />
 }
 
 /** The inline GenuiBlock tree for a resolved non-panel spec. */
 function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spec: GenuiSpec, warnings: string[] = []): ReactNode {
+
   return (
     // React key carries the stable source identity when present (atomic
     // remount at streaming→settled), falling back to the document key.
@@ -339,6 +374,7 @@ function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spe
       <FingerprintedGenuiBlock
         sessionId={context?.sessionId}
         sourceKey={context?.source?.id ?? String(key)}
+        docKey={String(key)}
         spec={spec}
         warnings={warnings}
       />
@@ -354,15 +390,16 @@ function renderInlineFence(key: Key, context: GenuiFenceContext | undefined, spe
  * Shared verbatim by both channels.
  */
 export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFenceContext): ReactNode | null {
-  const { spec, warnings } = resolveGenuiSpecDetailed(raw, context)
+  const { spec, warnings, complete } = resolveGenuiSpecDetailed(raw, context)
   if (spec === null) return null
   if (spec.panel === true) {
     // Publish only with a settled stable source — streaming/identity-less
     // renders keep the panel untouched. Appends additionally gate on a
-    // complete body (a settled-but-malformed append never merges partial
-    // content).
+    // WHOLE-body parse (see ResolvedGenuiSpec.complete): a settled-but-
+    // truncated append never merges partial content, while a body whose only
+    // defect was a repairable trailing comma still publishes.
     if (context !== undefined && context.sessionId !== undefined && context.source !== undefined) {
-      if (spec.append === true && !isCompleteJson(raw)) return <Fragment key={key} />
+      if (spec.append === true && !complete) return <Fragment key={key} />
       return (
         <FencePanelPublisher
           key={key}
@@ -391,11 +428,12 @@ export function renderResolvedFenceNode(raw: string, key: Key, context?: GenuiFe
  * the renderer with the plain three-argument contract keep working.
  */
 export function renderGenuiFence(raw: string, key: Key, context?: GenuiFenceContext, reportFailure?: GenuiFenceFailureReporter): ReactNode {
-  const { spec, warnings } = resolveGenuiSpecDetailed(raw, context)
+  const { spec, warnings, complete } = resolveGenuiSpecDetailed(raw, context)
   if (spec === null) return <FenceFallback key={key} fenceKey={key} raw={raw} context={context} reportFailure={reportFailure} />
   if (spec.panel === true) {
     if (context !== undefined && context.sessionId !== undefined && context.source !== undefined) {
-      if (spec.append === true && !isCompleteJson(raw)) return null
+      // Same whole-body append gate as the DOM channel (see renderResolvedFenceNode).
+      if (spec.append === true && !complete) return null
       return (
         <FencePanelPublisher
           key={key}

@@ -9,12 +9,17 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGenuiAction } from './action-context.ts'
 import css from './GenuiBlock.module.css'
-import { loadBlockState, saveBlockState } from './interaction-store.ts'
+import { loadBlockState, saveBlockState, type BlockInteractionState } from './interaction-store.ts'
 import { renderNode } from './blocks/render-node.tsx'
 import type { AnswersState, GenuiBlockProps, QuestionMeta } from './blocks/state.ts'
 import type { GenuiSpec } from './spec.ts'
 
 export const GENUI_ACTION_DEBOUNCE_MS = 300
+
+/** Durable-state save debounce: keystroke-paced `fields` updates collapse
+ * into one localStorage write; the unmount/key-change flush covers the tail.
+ * Exported for the durable-state tests (they previously redeclared 300). */
+export const SAVE_DEBOUNCE_MS = 300
 
 /**
  * Wrap the harness action callback with the per-action trailing debounce.
@@ -65,11 +70,44 @@ function specEquivalent(a: GenuiSpec, b: GenuiSpec): boolean {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
+/** Durable payload for the current state snapshot: secret field values are
+ * stripped before writing — passwords never persist. Shared by the debounced
+ * save and the unmount/key-change flush so both write the exact same shape. */
+function persistedStateOf(
+  answers: Record<string, string>,
+  locked: boolean,
+  fields: Record<string, string>,
+  secretFields: ReadonlySet<string>,
+  meta: Record<string, QuestionMeta>,
+): BlockInteractionState {
+  const safeFields = Object.fromEntries(
+    Object.entries(fields).filter(([id]) => !secretFields.has(id)),
+  )
+  return {
+    answers,
+    locked,
+    ...(Object.keys(safeFields).length > 0 ? { fields: safeFields } : {}),
+    // Grading metadata rides along: without it a restored submitted paper can
+    // only render the hollow "0 / 0" score.
+    ...(Object.keys(meta).length > 0 ? { meta } : {}),
+  }
+}
+
 /**
  * Render a GenUI spec as an inline block. Falls back to nothing when the spec
  * carries no items (the fence renderer already refused non-specs before us).
  */
-export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }: GenuiBlockProps) {
+/** Warnings equivalence for the memo comparator: resolveGenuiSpecDetailed
+ * produces a FRESH array per render even when the content is unchanged (the
+ * streaming path re-runs per chunk), so identity comparison would defeat the
+ * memo — compare contents instead. */
+function warningsEquivalent(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  return a.length === b.length && a.every((w, i) => w === b[i])
+}
+
+export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, fallbackStateKey, warnings }: GenuiBlockProps) {
   const gap = spec.gap ?? 16
   const onAction = useDebouncedAction(useGenuiAction())
   // v2.5/v2.6 answers registry: grouped radios record selections + question
@@ -79,7 +117,22 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
   // v2.7 durability: with a stateKey the state ALSO survives refresh/reopen —
   // loaded once at mount (seed for re-renders of the same content) and saved
   // on every change.
-  const [persisted] = useState(() => (stateKey === undefined ? null : loadBlockState(stateKey)))
+  // v2.9 streaming→settled migration: the settle transition remounts the
+  // block under a NEW durable key (settled source id) while the user's
+  // mid-stream answers live under the streaming-era key — consult the
+  // fallback once and re-save under the primary so the answers carry over.
+  // The initializer is idempotent (StrictMode double-invocation re-reads and
+  // re-writes the same data), so the save inside is safe.
+  const [persisted] = useState(() => {
+    if (stateKey === undefined) return null
+    const own = loadBlockState(stateKey)
+    if (own !== null) return own
+    if (fallbackStateKey === undefined || fallbackStateKey === stateKey) return null
+    const prior = loadBlockState(fallbackStateKey)
+    if (prior === null) return null
+    saveBlockState(stateKey, prior)
+    return prior
+  })
   const [answers, setAnswers] = useState<Record<string, string>>(persisted?.answers ?? {})
   const [fields, setFields] = useState<Record<string, string>>(persisted?.fields ?? {})
   // Grading metadata restores with the rest of the durable state: a locked
@@ -149,25 +202,40 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
     }),
     [answers, fields, secretFields, meta, locked, round, setAnswer, setField, registerSecretField, registerMeta, clear],
   )
-  // Durable save (debounced 300ms — typing in a field fires per keystroke).
-  // Secret field values are stripped before writing: passwords never persist.
+  // Latest interaction state for the synchronous flush below: the flush runs
+  // from a cleanup closure that must see the CURRENT state, not the state
+  // captured when its effect last re-ran.
+  const stateRef = useRef({ answers, locked, fields, secretFields, meta })
+  stateRef.current = { answers, locked, fields, secretFields, meta }
+  // One save path shared by the debounced write and the unmount/key-change
+  // flush — both must write the exact same shape (persistedStateOf strips
+  // secret field values). Rebuilt per render; each effect captures the
+  // `stateKey` of ITS OWN run, so a key change flushes under the OLD key
+  // (where the streaming-era fallback migration later finds the data) before
+  // the new key's debounce takes over.
+  const persistNow = (): void => {
+    if (stateKey === undefined) return
+    const { answers: a, locked: l, fields: f, secretFields: sf, meta: m } = stateRef.current
+    saveBlockState(stateKey, persistedStateOf(a, l, f, sf, m))
+  }
+  // Durable save (debounced — typing in a field fires per keystroke).
   useEffect(() => {
     if (stateKey === undefined) return
-    const timer = setTimeout(() => {
-      const safeFields = Object.fromEntries(
-        Object.entries(fields).filter(([id]) => !secretFields.has(id)),
-      )
-      saveBlockState(stateKey, {
-        answers,
-        locked,
-        ...(Object.keys(safeFields).length > 0 ? { fields: safeFields } : {}),
-        // Grading metadata rides along: without it a restored submitted
-        // paper can only render the hollow "0 / 0" score.
-        ...(Object.keys(meta).length > 0 ? { meta } : {}),
-      })
-    }, 300)
+    const timer = setTimeout(persistNow, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
+    // persistNow is a per-render closure over stateKey/stateRef; listing it
+    // would re-arm the timer every render, so only the state inputs matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateKey, answers, locked, fields, secretFields, meta])
+  // Flush on unmount and on durable-key change: the 300ms debounce used to be
+  // simply cancelled, so the LAST interaction inside the window (an answer
+  // clicked right before the streaming→settled remount, or a page refresh)
+  // was never written — the user's click vanished.
+  useEffect(() => {
+    if (stateKey === undefined) return
+    return () => { persistNow() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stateKey])
   return (
     <div className={css.block} data-genui>
       {spec.title !== undefined && <div className={css.banner}>{spec.title}</div>}
@@ -196,4 +264,7 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, warnings }:
       </div>
     </div>
   )
-}, (prev, next) => prev.stateKey === next.stateKey && specEquivalent(prev.spec, next.spec))
+}, (prev, next) => prev.stateKey === next.stateKey
+  && prev.fallbackStateKey === next.fallbackStateKey
+  && warningsEquivalent(prev.warnings, next.warnings)
+  && specEquivalent(prev.spec, next.spec))

@@ -298,3 +298,41 @@ describe('redactJsonErrorSnippet: strip the V8 body excerpt from diagnostics', (
     expect(redactJsonErrorSnippet('"只有片段"')).toBe('JSON 语法错误')
   })
 })
+
+describe('repairFenceJson: string-internal commas are never trailing commas', () => {
+  it('keeps a `,` inside a string value whose next char is `]` (甲,]乙)', () => {
+    // The trailing-comma scan used to lack the inString guard: a `,` inside
+    // "甲,]乙" was dropped as a trailing comma, silently rewriting content
+    // into "甲]乙" — and the healed body still parsed, so it was ADOPTED.
+    const r = repairFenceJson('{"type":"text","text":"甲,]乙","title":"t",}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ type: 'text', text: '甲,]乙', title: 't' })
+  })
+
+  it('keeps a `, }` inside a string value', () => {
+    const r = repairFenceJson('{"type":"callout","content":"一, }二","tone":"info",}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ type: 'callout', content: '一, }二', tone: 'info' })
+  })
+
+  it('keeps a `,]` inside an array-element string', () => {
+    const r = repairFenceJson('["a,]b",]')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual(['a,]b'])
+  })
+
+  it('still drops REAL trailing commas after strings', () => {
+    const r = repairFenceJson('{"a":"x",}')
+    expect(r).not.toBeNull()
+    expect(JSON.parse(r!.text)).toEqual({ a: 'x' })
+  })
+
+  it('agrees with completeFenceJson on the same body (tier-2 has the guard structurally)', () => {
+    const body = '{"type":"text","text":"甲,]乙","title":"t",}'
+    const t1 = repairFenceJson(body)
+    const t2 = completeFenceJson(body)
+    expect(t1).not.toBeNull()
+    expect(t2).not.toBeNull()
+    expect(JSON.parse(t1!.text)).toEqual(JSON.parse(t2!.text))
+  })
+})
