@@ -130,6 +130,23 @@ export function apply(ctx: Context): void {
     order: GENUI_SECTION_ORDER,
     text: GENUI_SECTION_TEXT,
   })
+  // Register a service effect and track its disposer on this plugin's fiber:
+  // both registries return an exact disposer, and `ctx.effect` runs it when
+  // the plugin unloads. The disposers used to be dropped, so a dynamic
+  // unload left the tool and the asset route behind on the host.
+  const trackEffect = (register: () => () => void): boolean => {
+    try {
+      ctx.effect(() => {
+        const dispose = register()
+        return () => { dispose() }
+      })
+      return true
+    } catch {
+      // The plugin fiber is already gone (service bound after unload) —
+      // nothing to register into; the host tears the rest down itself.
+      return false
+    }
+  }
   // The tools service is optional: hosts without tool access (or minimal
   // compositions) keep the fence channel; only when the registry exists does
   // the render_ui tool join the model's tool set. `reflect.get(name, false)`
@@ -144,31 +161,34 @@ export function apply(ctx: Context): void {
   // `internal/service` (emitted by cordis on every service binding), so the
   // registration lands the moment `tools` appears, whatever the order.
   let registered = false
-  const tryRegister = (value: { register(tool: unknown): unknown } | undefined): void => {
+  const tryRegister = (value: { register(tool: unknown): () => void } | undefined): void => {
     if (registered) return
-    const tools = value ?? ctx.reflect.get('tools', false) as { register(tool: unknown): unknown } | undefined
+    const tools = value ?? ctx.reflect.get('tools', false) as { register(tool: unknown): () => void } | undefined
     if (tools === undefined) return
-    tools.register(createRenderUiTool())
-    tools.register(createValidateDshUiTool())
+    if (!trackEffect(() => {
+      const d1 = tools.register(createRenderUiTool())
+      const d2 = tools.register(createValidateDshUiTool())
+      return () => { d1(); d2() }
+    })) return
     registered = true
   }
   tryRegister(undefined)
   ctx.on('internal/service', (name: string, value: unknown) => {
-    if (name === 'tools') tryRegister(value as { register(tool: unknown): unknown })
+    if (name === 'tools') tryRegister(value as { register(tool: unknown): () => void })
   })
 
   // Lazy-engine asset route: same optional-probe pattern as the tools
   // registry — the webserver service may bind after this plugin starts.
   let assetsRegistered = false
-  const tryRegisterAssets = (value: { register(route: unknown): unknown } | undefined): void => {
+  const tryRegisterAssets = (value: { register(route: unknown): () => void } | undefined): void => {
     if (assetsRegistered) return
-    const webServer = value ?? ctx.reflect.get('webServer', false) as { register(route: unknown): unknown } | undefined
+    const webServer = value ?? ctx.reflect.get('webServer', false) as { register(route: unknown): () => void } | undefined
     if (webServer === undefined) return
-    webServer.register({ kind: 'prefix', path: ASSET_ROUTE_PATH, handler: serveGenuiAsset })
+    if (!trackEffect(() => webServer.register({ kind: 'prefix', path: ASSET_ROUTE_PATH, handler: serveGenuiAsset }))) return
     assetsRegistered = true
   }
   tryRegisterAssets(undefined)
   ctx.on('internal/service', (name: string, value: unknown) => {
-    if (name === 'webServer') tryRegisterAssets(value as { register(route: unknown): unknown })
+    if (name === 'webServer') tryRegisterAssets(value as { register(route: unknown): () => void })
   })
 }
