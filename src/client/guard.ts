@@ -276,6 +276,20 @@ function renamed(ctx: RepairCtx, path: string, from: string, to: string): void {
   ctx.diag?.push({ kind: 'renamed', path, detail: `${path} 的字段 '${from}' 已按正名 '${to}' 缝补——能用，但请改用正名 ${to}` })
 }
 
+/** Derive callout `content` from an `items` array alias: the first string
+ * item verbatim, otherwise the JSON serialization of the whole array
+ * (guarded — stringify throws on cycles / BigInt). Returns undefined when
+ * nothing usable can be extracted (non-array or empty array). */
+function calloutItemsContent(items: unknown): string | undefined {
+  if (!Array.isArray(items) || items.length === 0) return undefined
+  if (typeof items[0] === 'string') return str(items[0], GENUI_LIMITS.maxString)
+  try {
+    return str(JSON.stringify(items) ?? undefined, GENUI_LIMITS.maxString)
+  } catch {
+    return undefined
+  }
+}
+
 /** Layout-container children with the children/columns aliases recorded
  * (K3 audit #8) and the child path threaded for nested diagnostics. */
 function repairContainerItems(v: Record<string, unknown>, ctx: RepairCtx, depth: number, path: string): GenuiNode[] {
@@ -303,7 +317,7 @@ const NODE_KEYS: Record<string, ReadonlySet<string>> = {
   link: new Set(['label', 'href']),
   audio: new Set(['src', 'url', 'alt', 'loop']),
   video: new Set(['src', 'url', 'alt', 'poster', 'loop', 'muted', 'aspectRatio']),
-  badge: new Set(['label', 'text', 'value', 'tone', 'icon']),
+  badge: new Set(['label', 'text', 'value', 'content', 'tone', 'icon']),
   stat: new Set(['label', 'value', 'val', 'delta', 'unit']),
   progress: new Set(['value', 'percent', 'label', 'valueLabel']),
   divider: new Set([]),
@@ -314,7 +328,7 @@ const NODE_KEYS: Record<string, ReadonlySet<string>> = {
   chart: new Set(['data', 'points', 'series', 'kind']),
   tabs: new Set(['tabs']),
   plot: new Set(['series', 'xMin', 'xMax', 'yMin', 'yMax', 'title']),
-  callout: new Set(['content', 'text', 'body', 'description', 'tone', 'type_', 'level', 'title']),
+  callout: new Set(['content', 'text', 'body', 'description', 'items', 'tone', 'type_', 'level', 'title']),
   steps: new Set(['steps', 'items', 'current']),
   keyvalue: new Set(['pairs', 'items', 'data']),
   diff: new Set(['diffs']),
@@ -370,15 +384,48 @@ function repairItems(list: unknown, ctx: RepairCtx, depth: number, path: string)
 
 function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string): GenuiNode | null {
   if (depth > GENUI_LIMITS.maxDepth) return null
-  const v = obj(value)
-  if (v === undefined) return null
-  const type = v.type
+  const vo = obj(value)
+  if (vo === undefined) return null
+  const type = vo.type
   if (typeof type !== 'string') return null
+  // HTML-intuition heading aliases (silent-content-loss class): a model
+  // raised on HTML writes {"type":"h2"} — the guard used to pass it through
+  // as an opaque custom node and the renderer's default branch rendered
+  // null, so the heading vanished without a trace. Normalize h1/h2/h3
+  // (trim + case-insensitive) to text+size and let the normal text repair
+  // run on the normalized node. Content priority: content → text →
+  // string children → body. NOT stitched: h4/h5/h6 (no size counterpart —
+  // the validator flags them with a pointer at text+size) and an ARRAY
+  // children (the author meant nested child nodes; rewriting to text would
+  // silently lose them, so the node stays an opaque pass-through).
+  let v: Record<string, unknown> = vo
+  let effectiveType = type
+  const loweredType = type.trim().toLowerCase()
+  if ((loweredType === 'h1' || loweredType === 'h2' || loweredType === 'h3') && !Array.isArray(vo.children)) {
+    ctx.diag?.push({ kind: 'renamed', path, detail: `${path} 的 type '${type}' 已缝补为 'text' + size:'${loweredType}'——能用，但请直接写 {"type":"text","size":"${loweredType}"}` })
+    const content = vo.content !== undefined ? vo.content
+      : vo.text !== undefined ? vo.text
+      : typeof vo.children === 'string' ? vo.children
+      : vo.body
+    // Consumed alias keys are stripped from the normalized view so the
+    // unknown-key diff below never double-reports a consumed alias as
+    // dropped (the same reason NODE_KEYS carries alias names).
+    const consumed: string[] = []
+    if (vo.content === undefined && content !== undefined) {
+      if (vo.text !== undefined) { renamed(ctx, path, 'text', 'content'); consumed.push('text') }
+      else if (typeof vo.children === 'string') { renamed(ctx, path, 'children', 'content'); consumed.push('children') }
+      else if (vo.body !== undefined) { renamed(ctx, path, 'body', 'content'); consumed.push('body') }
+    }
+    v = { ...vo, type: 'text', size: loweredType }
+    if (content !== undefined) v.content = content
+    for (const key of consumed) delete v[key]
+    effectiveType = 'text'
+  }
   // Unknown-key diff against the per-type field table (K3 audit #8): repair
   // rebuilds every node from whitelisted keys, so anything else silently
   // vanishes — record it when a collector is attached. Types without a table
   // (plugin-registered customs) pass through untouched and stay unexamined.
-  const allowed = NODE_KEYS[type]
+  const allowed = NODE_KEYS[effectiveType]
   if (allowed !== undefined) {
     for (const key of Object.keys(v)) {
       // 'type' is the discriminator itself, not a payload field: it is
@@ -386,11 +433,11 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
       // false-positive as an unknown key.
       if (key === 'type') continue
       if (!allowed.has(key)) {
-        ctx.diag?.push({ kind: 'dropped-unknown-key', path, detail: `${path} 的字段 '${key}' 不是 ${type} 的合法字段，已被无声丢弃（键只取自字段表）` })
+        ctx.diag?.push({ kind: 'dropped-unknown-key', path, detail: `${path} 的字段 '${key}' 不是 ${effectiveType} 的合法字段，已被无声丢弃（键只取自字段表）` })
       }
     }
   }
-  switch (type) {
+  switch (effectiveType) {
     case 'text': {
       if (v.content === undefined && v.text !== undefined) renamed(ctx, path, 'text', 'content')
       const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString)
@@ -479,8 +526,15 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
       }
     }
     case 'badge': {
-      const label = str(v.label, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.value, GENUI_LIMITS.maxString)
+      // `content` is accepted as a last-resort `label` alias (a label-ish
+      // field models emit for badges); the rename is recorded (K3 audit #8)
+      // only when content is the field that actually produced the label.
+      const fromLabel = str(v.label, GENUI_LIMITS.maxString)
+      const fromText = str(v.text, GENUI_LIMITS.maxString)
+      const fromValue = str(v.value, GENUI_LIMITS.maxString)
+      const label = fromLabel ?? fromText ?? fromValue ?? str(v.content, GENUI_LIMITS.maxString)
       if (label === undefined) return null
+      if (fromLabel === undefined && fromText === undefined && fromValue === undefined) renamed(ctx, path, 'content', 'label')
       return { type: 'badge', label, ...opt('tone', enu(v.tone, BADGE_TONES)), ...opt('icon', str(v.icon, 64)) }
     }
     case 'stat': {
@@ -572,14 +626,19 @@ function repairNode(value: unknown, ctx: RepairCtx, depth: number, path: string)
       // `text`/`body`/`description` are accepted as `content` aliases;
       // `type_`/`level` as `tone` aliases — all recorded (K3 audit #8):
       // the blacklist tells the model these forms are FORBIDDEN to emit.
+      // `items` is a last-resort `content` alias: an array the model shipped
+      // in place of prose — the first string item becomes the content,
+      // otherwise the whole array is serialized (see calloutItemsContent).
+      const itemsAsContent = calloutItemsContent(v.items)
       if (v.content === undefined) {
         if (v.text !== undefined) renamed(ctx, path, 'text', 'content')
         else if (v.body !== undefined) renamed(ctx, path, 'body', 'content')
         else if (v.description !== undefined) renamed(ctx, path, 'description', 'content')
+        else if (itemsAsContent !== undefined) renamed(ctx, path, 'items', 'content')
       }
       if (v.tone === undefined && v.type_ !== undefined) renamed(ctx, path, 'type_', 'tone')
       else if (v.tone === undefined && v.level !== undefined) renamed(ctx, path, 'level', 'tone')
-      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString)
+      const content = str(v.content, GENUI_LIMITS.maxString) ?? str(v.text, GENUI_LIMITS.maxString) ?? str(v.body, GENUI_LIMITS.maxString) ?? str(v.description, GENUI_LIMITS.maxString) ?? itemsAsContent
       if (content === undefined) return null
       return { type: 'callout', content, ...opt('tone', enu(v.tone ?? v.type_ ?? v.level, CALLOUT_TONES)), ...opt('title', str(v.title, GENUI_LIMITS.maxString)) }
     }
@@ -1677,12 +1736,14 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       // carries local `answer` data.
       break
     case 'badge':
-      if (typeof v.label !== 'string' && typeof v.text !== 'string' && typeof v.value !== 'string') {
-        errors.push(`${at}: type 'badge' requires label, text, or value (string)`)
+      // `content` alias mirrors the repair-side content→label stitch.
+      if (typeof v.label !== 'string' && typeof v.text !== 'string' && typeof v.value !== 'string' && typeof v.content !== 'string') {
+        errors.push(`${at}: type 'badge' requires label, text, value, or content (string)`)
       }
       isStr('label')
       isStr('text')
       isStr('value')
+      isStr('content')
       break
     case 'stat':
       if (typeof v.label !== 'string') errors.push(`${at}: type 'stat' requires label (string)`)
@@ -1749,8 +1810,9 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       if (!Array.isArray(v.series)) errors.push(`${at}: type 'plot' requires series (array)`)
       break
     case 'callout':
-      // `text`/`body`/`description` aliases mirror repair.
-      if (typeof v.content !== 'string' && typeof v.text !== 'string' && typeof v.body !== 'string' && typeof v.description !== 'string') errors.push(`${at}: type 'callout' requires content (string)`)
+      // `text`/`body`/`description` aliases mirror repair; an `items`
+      // array mirrors the repair-side items→content stitch.
+      if (typeof v.content !== 'string' && typeof v.text !== 'string' && typeof v.body !== 'string' && typeof v.description !== 'string' && !Array.isArray(v.items)) errors.push(`${at}: type 'callout' requires content (string)`)
       break
     case 'steps':
       if (!Array.isArray(v.steps) && !Array.isArray(v.items)) errors.push(`${at}: type 'steps' requires steps (array)`)
@@ -1813,9 +1875,22 @@ function validateNode(value: unknown, depth: number, at: string, errors: string[
       }
       isNum('height')
       break
-    default:
+    default: {
+      // HTML-intuition heading aliases: h1/h2/h3 (any case/space form) are
+      // stitched to text+size by repairNode, so they are NOT errors here —
+      // the stitch surfaces as a `renamed` diagnostic via validate_dsh_ui's
+      // repair pass, and the amber warning bar stays silent for content that
+      // renders fine. h4/h5/h6 have no size counterpart and stay errors,
+      // now with a pointer at the canonical form.
+      const lowered = type.trim().toLowerCase()
+      if (lowered === 'h1' || lowered === 'h2' || lowered === 'h3') break
+      if (lowered === 'h4' || lowered === 'h5' || lowered === 'h6') {
+        errors.push(`${at}: unknown type '${type}' (custom renderer?) — h4/h5/h6 无对应组件，请改用 {"type":"text","size":"h3"}`)
+        break
+      }
       // Unknown type: plugin-registered custom nodes are valid when a
       // renderer exists; the guard cannot know, so report as a warning.
       errors.push(`${at}: unknown type '${type}' (custom renderer?)`)
+    }
   }
 }

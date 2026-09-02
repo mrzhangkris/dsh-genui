@@ -551,7 +551,7 @@ describe('validateGenuiSpec: diagnostics', () => {
     const result = validateGenuiSpec({ items: [{ type: 'text' }, { type: 'badge' }] })
     expect(result.ok).toBe(false)
     expect(result.errors.join('\n')).toContain("requires content or text")
-    expect(result.errors.join('\n')).toContain("requires label, text, or value")
+    expect(result.errors.join('\n')).toContain("requires label, text, value, or content")
   })
 })
 
@@ -749,6 +749,96 @@ describe('repair/validate: callout text→content & type_→tone aliases', () =>
   })
 })
 
+describe('repair/validate: HTML heading aliases h1/h2/h3 → text+size', () => {
+  it('repairs {"type":"h2",content} into text+size:h2 (正向)', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'h2', content: '章节标题' }] })
+    expect(spec?.items[0]).toEqual({ type: 'text', content: '章节标题', size: 'h2' })
+  })
+
+  it('validator stays silent for h1/h2/h3 (any case/space form)', () => {
+    for (const t of ['h1', 'h2', 'h3', 'H2', ' h3 ']) {
+      const r = validateGenuiSpec({ items: [{ type: t, content: 'x' }] })
+      expect(r.ok, `${t} -> ${JSON.stringify(r.errors)}`).toBe(true)
+      expect(r.errors).toEqual([])
+    }
+  })
+
+  it('records a type-level renamed diagnostic for the stitch', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    repairGenuiSpec({ items: [{ type: 'h2', content: 'x' }] }, diag)
+    const renames = diag.filter(d => d.kind === 'renamed')
+    expect(renames).toHaveLength(1)
+    expect(renames[0].path).toBe('items[0]')
+    expect(renames[0].detail).toContain('h2')
+    expect(renames[0].detail).toContain('text')
+  })
+
+  it('content priority: content → text → string children → body', () => {
+    expect(repairGenuiSpec({ items: [{ type: 'h2', text: '来自text' }] })?.items[0])
+      .toEqual({ type: 'text', content: '来自text', size: 'h2' })
+    expect(repairGenuiSpec({ items: [{ type: 'h2', children: '来自children' }] })?.items[0])
+      .toEqual({ type: 'text', content: '来自children', size: 'h2' })
+    expect(repairGenuiSpec({ items: [{ type: 'h2', body: '来自body' }] })?.items[0])
+      .toEqual({ type: 'text', content: '来自body', size: 'h2' })
+    // canonical content wins when both content and an alias are present
+    expect(repairGenuiSpec({ items: [{ type: 'h2', content: '正文', body: '备选' }] })?.items[0])
+      .toEqual({ type: 'text', content: '正文', size: 'h2' })
+  })
+
+  it('alias-consumed keys do not double-report as dropped-unknown-key', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    repairGenuiSpec({ items: [{ type: 'h2', text: 'x' }] }, diag)
+    expect(diag.filter(d => d.kind === 'renamed')).toHaveLength(2) // type 级 + text→content 字段级
+    expect(diag.filter(d => d.kind === 'dropped-unknown-key')).toHaveLength(0)
+  })
+
+  it('case-insensitive: H2 → text+size:h2', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'H2', content: '大写标题' }] })
+    expect(spec?.items[0]).toEqual({ type: 'text', content: '大写标题', size: 'h2' })
+  })
+
+  it('drops a heading alias with no content field (h2 无内容 → dropped)', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'h2' }, text('保留下来的节点')] })
+    expect(spec?.items).toHaveLength(1)
+    expect(spec?.items[0]).toEqual({ type: 'text', content: '保留下来的节点' })
+  })
+
+  it('does NOT stitch h4/h5/h6 (opaque pass-through + validator error with pointer)', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'h5', content: 'x' }] })
+    expect((spec?.items[0] as { type: string }).type).toBe('h5')
+    const r = validateGenuiSpec({ items: [{ type: 'h5', content: 'x' }] })
+    expect(r.ok).toBe(false)
+    expect(r.errors.join('\n')).toContain("unknown type 'h5'")
+    expect(r.errors.join('\n')).toContain('请改用 {"type":"text","size":"h3"}')
+    // 大写形式同样报错
+    expect(validateGenuiSpec({ items: [{ type: 'H4' }] }).ok).toBe(false)
+  })
+
+  it('does NOT stitch when children is an array (nested-child intent)', () => {
+    const spec = repairGenuiSpec({ items: [{ type: 'h2', children: [{ type: 'text', content: '子节点' }] }] })
+    expect((spec?.items[0] as { type: string }).type).toBe('h2')
+  })
+
+  it('regression: legal text/badge/callout specs repair identically (前后等价)', () => {
+    const before = repairGenuiSpec({
+      items: [
+        text('纯文本'),
+        { type: 'badge', label: '新', tone: 'success' },
+        { type: 'callout', content: '提示', tone: 'info', title: 'T' },
+      ],
+    })
+    expect(before).not.toBeNull()
+    const after = repairGenuiSpec(before)
+    expect(after).toEqual(before)
+  })
+
+  it('idempotent: a stitched heading repairs to itself on the second pass', () => {
+    const once = repairGenuiSpec({ items: [{ type: 'h2', content: 'x' }] })
+    const twice = repairGenuiSpec(once)
+    expect(twice).toEqual(once)
+  })
+})
+
 describe('repair/validate: common field-name aliases (batch)', () => {
   // 每个 [变体 spec 的 items[0], 期望修复后的 items[0]]
   const cases: Array<[unknown, unknown]> = [
@@ -848,6 +938,59 @@ describe('repair: callout level→tone alias', () => {
   it('accepts level as tone', () => {
     const spec = repairGenuiSpec({ items: [{ type: 'callout', level: 'success', content: 'x' }] })
     expect(spec?.items[0]).toEqual({ type: 'callout', content: 'x', tone: 'success' })
+  })
+})
+
+describe('repair/validate: badge content→label & callout items→content aliases', () => {
+  it('badge heals content into label and records the rename', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    const spec = repairGenuiSpec({ items: [{ type: 'badge', content: '新增' }] }, diag)
+    expect(spec?.items[0]).toEqual({ type: 'badge', label: '新增' })
+    const renames = diag.filter((d) => d.kind === 'renamed')
+    expect(renames).toHaveLength(1)
+    expect(renames[0]!.path).toBe('items[0]')
+    expect(renames[0]!.detail).toContain("'content'")
+    expect(renames[0]!.detail).toContain('label')
+  })
+
+  it('badge still prefers label over the content alias without recording a rename', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    const spec = repairGenuiSpec({ items: [{ type: 'badge', label: 'L', content: 'C' }] }, diag)
+    expect(spec?.items[0]).toEqual({ type: 'badge', label: 'L' })
+    expect(diag.filter((d) => d.kind === 'renamed')).toHaveLength(0)
+  })
+
+  it('callout heals an items array into content (first string item wins)', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', items: ['要点一', '要点二'] }] }, diag)
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '要点一' })
+    const renames = diag.filter((d) => d.kind === 'renamed')
+    expect(renames).toHaveLength(1)
+    expect(renames[0]!.path).toBe('items[0]')
+    expect(renames[0]!.detail).toContain("'items'")
+    expect(renames[0]!.detail).toContain('content')
+  })
+
+  it('callout serializes non-string items into content', () => {
+    const items = [{ k: 'v' }, 2]
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', items }] })
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: JSON.stringify(items) })
+  })
+
+  it('callout keeps text ahead of the items alias', () => {
+    const diag: GenuiRepairDiagnostic[] = []
+    const spec = repairGenuiSpec({ items: [{ type: 'callout', text: '正文', items: ['备选'] }] }, diag)
+    expect(spec?.items[0]).toEqual({ type: 'callout', content: '正文' })
+    const renames = diag.filter((d) => d.kind === 'renamed')
+    expect(renames).toHaveLength(1)
+    expect(renames[0]!.detail).toContain("'text'")
+  })
+
+  it('validate agrees with repair on the new aliases', () => {
+    expect(validateGenuiSpec({ items: [{ type: 'badge', content: 'x' }] }).ok).toBe(true)
+    expect(validateGenuiSpec({ items: [{ type: 'callout', items: ['x'] }] }).ok).toBe(true)
+    expect(validateGenuiSpec({ items: [{ type: 'badge' }] }).ok).toBe(false)
+    expect(validateGenuiSpec({ items: [{ type: 'callout', title: 'x' }] }).ok).toBe(false)
   })
 })
 
