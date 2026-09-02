@@ -182,15 +182,25 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, fallbackSta
   // captured when its effect last re-ran.
   const stateRef = useRef({ answers, locked, fields, secretFields, meta })
   stateRef.current = { answers, locked, fields, secretFields, meta }
+  // One save path shared by the debounced write and the unmount/key-change
+  // flush — both must write the exact same shape (persistedStateOf strips
+  // secret field values). Rebuilt per render; each effect captures the
+  // `stateKey` of ITS OWN run, so a key change flushes under the OLD key
+  // (where the streaming-era fallback migration later finds the data) before
+  // the new key's debounce takes over.
+  const persistNow = (): void => {
+    if (stateKey === undefined) return
+    const { answers: a, locked: l, fields: f, secretFields: sf, meta: m } = stateRef.current
+    saveBlockState(stateKey, persistedStateOf(a, l, f, sf, m))
+  }
   // Durable save (debounced 300ms — typing in a field fires per keystroke).
-  // Secret field values are stripped before writing: passwords never persist.
   useEffect(() => {
     if (stateKey === undefined) return
-    const timer = setTimeout(() => {
-      const { answers: a, locked: l, fields: f, secretFields: sf, meta: m } = stateRef.current
-      saveBlockState(stateKey, persistedStateOf(a, l, f, sf, m))
-    }, 300)
+    const timer = setTimeout(persistNow, 300)
     return () => clearTimeout(timer)
+    // persistNow is a per-render closure over stateKey/stateRef; listing it
+    // would re-arm the timer every render, so only the state inputs matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateKey, answers, locked, fields, secretFields, meta])
   // Flush on unmount and on durable-key change: the 300ms debounce used to be
   // simply cancelled, so the LAST interaction inside the window (an answer
@@ -198,10 +208,8 @@ export const GenuiBlock = memo(function GenuiBlock({ spec, stateKey, fallbackSta
   // was never written — the user's click vanished.
   useEffect(() => {
     if (stateKey === undefined) return
-    return () => {
-      const { answers: a, locked: l, fields: f, secretFields: sf, meta: m } = stateRef.current
-      saveBlockState(stateKey, persistedStateOf(a, l, f, sf, m))
-    }
+    return () => { persistNow() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateKey])
   return (
     <div className={css.block} data-genui>

@@ -312,8 +312,11 @@ export const PlotBlock = memo(function PlotBlock({
       const span = curMax - curMin
       const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15
       const next = span * factor
+      // Keep the cursor's data coordinate fixed: the zoom anchors at the
+      // point under the pointer (screen px → plot px → data x).
       const rect = el.getBoundingClientRect()
-      const cx = curMin + (((e.clientX - rect.left) / rect.width) * WIDTH - PAD_L) / plotW * (curMax - curMin)
+      const px = ((e.clientX - rect.left) / rect.width) * WIDTH
+      const cx = curMin + ((px - PAD_L) / plotW) * (curMax - curMin)
       const left = cx - ((cx - curMin) / span) * next
       setView(prev => ({ xMin: left, xMax: left + next, yMin: prev.yMin, yMax: prev.yMax }))
     }

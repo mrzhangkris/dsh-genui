@@ -165,10 +165,13 @@ export function resolveGenuiSpecDetailed(raw: string, context?: GenuiFenceContex
   //     that case). A streaming half fails whole-body JSON.parse, so it
   //     stays suppressed. Short-circuit keeps the conversation path free of
   //     an extra parse when source already proves settledness.
-  const settled = context?.source !== undefined || isCompleteJson(raw)
+  const wholeRaw = isCompleteJson(raw)
+  const settled = context?.source !== undefined || wholeRaw
   // Whole-body completeness for the append gate (see ResolvedGenuiSpec).
-  // Computed once here so both render channels share the exact same verdict.
-  const complete = settled ? (isCompleteJson(raw) || repairFenceJson(raw) !== null) : false
+  // Computed once here so both render channels share the exact same verdict;
+  // the `settled &&` short-circuit skips the repair scan mid-stream (a
+  // streaming half never publishes an append anyway — no source exists).
+  const complete = settled && (wholeRaw || repairFenceJson(raw) !== null)
   const parsed = parsePartialGenuiSpec(raw)
   let spec = parsed === null ? null : repairGenuiSpec(parsed)
   // Warnings reflect the ORIGINAL parsed body when it was used as-is;
