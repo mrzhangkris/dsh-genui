@@ -24,7 +24,7 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdtemp, mkdir, copyFile, rm, writeFile, appendFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, copyFile, rm, writeFile, appendFile, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -35,9 +35,20 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DSH_ROOT = process.env.DSH_ROOT ?? resolve(process.env.HOME ?? '', '.dsh/source/current')
 // 精确宿主二进制：必须是 DSH_ROOT 内构建出的绝对路径；默认不从 PATH 找 dsh。
 const DSH_BIN = process.env.DSH_BIN ?? join(DSH_ROOT, 'apps/cli/lib/bin.js')
+const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
+const log = (msg) => console.log(`· ${msg}`)
+// `fail` must be defined BEFORE its first use below: the guards used to sit
+// above the definition and crashed with a TDZ ReferenceError instead of
+// printing the actionable message.
 if (!resolve(DSH_BIN).startsWith('/')) fail('DSH_BIN 必须是绝对路径')
 if (!existsSync(DSH_BIN)) fail(`DSH_BIN 不存在: ${DSH_BIN}（在 DSH_ROOT 内先 pnpm run build）`)
-const arg = (name) => process.argv[process.argv.indexOf(name) + 1]
+// `arg` must return undefined when the flag is absent: `indexOf + 1` on a
+// missing flag yielded argv[0] (the node executable path), which then failed
+// the --install validation with a confusing message.
+const arg = (name) => {
+  const i = process.argv.indexOf(name)
+  return i >= 0 ? process.argv[i + 1] : undefined
+}
 const PORT = Number(arg('--port') ?? 3088)
 const KEEP = process.argv.includes('--keep')
 const SMOKE = process.argv.includes('--smoke')
@@ -45,9 +56,6 @@ const INSTALL = arg('--install') ?? 'link'
 const TARBALL = arg('--tarball')
 const TARBALL_SHA = arg('--tarball-sha256')
 const PROMPT = '用 dsh-ui 围栏输出一个订单监控面板：标题「订单监控」，三张 stat 卡（总收入、订单数、转化率，给任意示例数值），再加一个按钮（type: button, label: 刷新数据, action: refresh）。只输出这一个 dsh-ui 围栏，不要任何其他文字。'
-
-const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1) }
-const log = (msg) => console.log(`· ${msg}`)
 
 // ── 预检：参数、端口、工具 ─────────────────────────────────────────────────
 if (!['link', 'git', 'tarball'].includes(INSTALL)) fail(`--install 仅允许 link | git | tarball，收到 "${INSTALL}"`)
@@ -149,10 +157,38 @@ try {
   webChild.stdout.pipe(logStream)
   webChild.stderr.pipe(logStream)
   const BASE = `http://127.0.0.1:${PORT}`
+  // dsh web gates every route behind a query token printed on stdout — the
+  // tokenless ready probe used to get 401 forever while the server was
+  // actually up. Extract the token from the boot log, then probe WITH it.
+  let TOKEN = ''
+  for (let i = 0; i < 60; i++) {
+    if (webChild.exitCode !== null) break
+    try { TOKEN = /token=([^&"\s]+)/.exec(await readFile(webLog, 'utf8'))?.[1] ?? '' } catch { /* log not written yet */ }
+    if (TOKEN !== '') break
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  if (TOKEN === '') {
+    await logTail()
+    fail(`dsh web 60s 内未打印启动 URL/token（日志: ${webLog}）`)
+  }
+  const BASE_PAGE = `${BASE}/?token=${TOKEN}`
+  // Two-step auth dance: `?token=` replies 303 + Set-Cookie; fetch does NOT
+  // keep cookies across a followed redirect, so a plain fetch(BASE_PAGE)
+  // landed on the cookie-less redirect target and got 401 forever.
+  // Authenticate manually, keep the cookie for the later client.js probe.
+  let AUTH_COOKIE = ''
   let ready = false
   for (let i = 0; i < 120; i++) {
     if (webChild.exitCode !== null) break
-    try { const res = await fetch(BASE); if (res.ok) { ready = true; break } } catch { /* booting */ }
+    try {
+      const res = await fetch(BASE_PAGE, { redirect: 'manual' })
+      if (res.status === 303 || res.status === 200) {
+        const setCookie = res.headers.get('set-cookie')
+        if (setCookie !== null && setCookie.includes('=')) AUTH_COOKIE = setCookie.split(';')[0] ?? ''
+        ready = true
+        break
+      }
+    } catch { /* booting */ }
     await new Promise(r => setTimeout(r, 1000))
   }
   if (!ready) {
@@ -167,17 +203,31 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } })
   const pageErrors = []
   page.on('pageerror', e => pageErrors.push(String(e)))
-  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await page.goto(BASE_PAGE, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForTimeout(5000)
 
-  // client.js 必须 200（插件 bundle 可加载）；404 直接失败
-  const clientRes = await fetch(`${BASE}/plugins/@changfenhuang/dsh-genui/client.js`)
+  // client.js 必须 200（插件 bundle 可加载）。webserver 的 /plugins 路由
+  // 只应答「预注册」的内容哈希 URL（`/plugins/??<id>/client.js&rev=…`，
+  // 在页面的 preload 注入里逐字给出）——手工拼的单包路径恒 404，旧探测
+  // 因此永远失败。从页面 HTML 解析 genui 的真实 URL 再请求（带启动换来的
+  // cookie；HTML 里的 &amp; 需反转义）。
+  const html = await page.content()
+  const genuiUrlMatch = /(?:src|href)="([^"]*dsh-genui\/client\.js[^"]*)"/.exec(html)
+  const genuiUrl = genuiUrlMatch?.[1]?.replaceAll('&amp;', '&')
+  if (genuiUrl === undefined) {
+    await page.screenshot({ path: join(artifactsDir, 'e2e-fail-client404.png') })
+    await logTail()
+    fail('首页注入中未找到 dsh-genui 的 client bundle URL（插件未组合或未注入）')
+  }
+  const clientRes = await fetch(genuiUrl.startsWith('/') ? `${BASE}${genuiUrl}` : genuiUrl, {
+    headers: AUTH_COOKIE !== '' ? { cookie: AUTH_COOKIE } : {},
+  })
   if (!clientRes.ok) {
     await page.screenshot({ path: join(artifactsDir, 'e2e-fail-client404.png') })
     await logTail()
     fail(`client.js 返回 ${clientRes.status}（插件 bundle 未加载）`)
   }
-  log(`✓ client.js ${clientRes.status}`)
+  log(`✓ client.js ${clientRes.status}（combo URL rev 校验通过）`)
 
   if (pageErrors.length > 0) {
     await page.screenshot({ path: join(artifactsDir, 'e2e-fail-pageerror.png') })
